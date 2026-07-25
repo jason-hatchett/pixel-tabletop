@@ -1,3 +1,8 @@
+# OPTIONAL convenience for WSL / Linux / macOS only — `make` is NOT on Windows
+# PowerShell. The portable interface everyone shares is `npm run <script>`
+# (works on every OS) and `docker compose` — this file only wraps those.
+# PowerShell/Windows users: use `npm run dev` / `docker compose up dev` directly.
+#
 # Thin entry point over npm + docker compose. One command per common task.
 # Two tiers: local (needs Node 22 via nvm) and -docker (needs Docker, zero local Node).
 .DEFAULT_GOAL := help
