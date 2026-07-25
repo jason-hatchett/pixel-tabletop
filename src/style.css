@@ -1,0 +1,93 @@
+* { box-sizing: border-box; }
+
+html, body, #app {
+  margin: 0;
+  height: 100%;
+  background: #0b0d12;
+  color: #e6e9ef;
+  font-family: ui-sans-serif, system-ui, "Segoe UI", sans-serif;
+}
+
+#app {
+  display: grid;
+  grid-template-rows: auto 1fr auto;
+  height: 100vh;
+}
+
+#toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  padding: 8px 12px;
+  background: #151925;
+  border-bottom: 1px solid #232a3a;
+}
+
+#toolbar .brand { font-weight: 700; letter-spacing: 0.02em; }
+#toolbar label { display: flex; align-items: center; gap: 6px; font-size: 13px; color: #aab3c5; }
+
+#toolbar select,
+#toolbar button {
+  background: #232a3a;
+  color: #e6e9ef;
+  border: 1px solid #313a50;
+  border-radius: 6px;
+  padding: 5px 10px;
+  font-size: 13px;
+  cursor: pointer;
+}
+#toolbar button:hover { background: #2c3547; }
+
+/* An active toggle (Grid/Snap/Measure/Template on). */
+#toolbar button.on {
+  background: #234c3f;
+  border-color: #2e6b57;
+  color: #cdece0;
+}
+#toolbar button.on:hover { background: #2a5a4a; }
+
+/* Each toolbar section stays together and wraps as a whole unit (only wrapping
+   internally if a single section is itself wider than the row). */
+#toolbar .section {
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+}
+
+/* The place/move object controls group and inline hints. */
+#place-controls {
+  display: inline-flex;
+  align-items: center;
+  gap: 12px;
+}
+.hint {
+  font-size: 12px;
+  font-style: italic;
+  color: #8a93a6;
+}
+
+.divider {
+  width: 1px;
+  height: 22px;
+  background: #313a50;
+}
+
+.readout {
+  margin-left: auto;
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  color: #ffd166;
+}
+
+#board-host { position: relative; overflow: hidden; min-width: 0; }
+#board-host canvas { display: block; image-rendering: pixelated; }
+
+#status {
+  padding: 6px 12px;
+  font-size: 12px;
+  color: #8a93a6;
+  background: #151925;
+  border-top: 1px solid #232a3a;
+}

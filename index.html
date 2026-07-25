@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Pixel Tabletop</title>
+    <link rel="stylesheet" href="/src/style.css" />
+  </head>
+  <body>
+    <div id="app">
+      <header id="toolbar">
+        <span class="brand">Pixel Tabletop</span>
+
+        <!-- Setup -->
+        <span class="section">
+          <label>System <select id="system-select"></select></label>
+          <label>Mode
+            <select id="mode-select">
+              <option value="move">Move objects</option>
+              <option value="place">Place objects</option>
+            </select>
+          </label>
+        </span>
+
+        <span class="divider"></span>
+
+        <!-- Objects (place/move) -->
+        <span class="section">
+          <span id="place-controls">
+            <label>Type
+              <select id="objtype-select">
+                <option value="token">Token / base</option>
+                <option value="terrain">Terrain</option>
+                <option value="wall">Wall</option>
+              </select>
+            </label>
+            <label id="objitem-label">Item <select id="objitem-select"></select></label>
+            <span id="wall-hint" class="hint">drag on the board to draw a wall</span>
+          </span>
+          <span id="move-hint" class="hint">click to select · drag to move · rotate with [ / ] · Delete to remove</span>
+        </span>
+
+        <span class="divider"></span>
+
+        <!-- View &amp; tools -->
+        <span class="section">
+          <button id="grid-toggle" type="button">Grid: on</button>
+          <button id="snap-toggle" type="button">Snap: on</button>
+          <button id="measure-toggle" type="button">Measure: off</button>
+          <label>Template <select id="template-select"></select></label>
+          <button id="template-toggle" type="button">Template: off</button>
+        </span>
+
+        <span id="readout" class="readout"></span>
+      </header>
+      <div id="board-host"></div>
+      <footer id="status">
+        Scroll to zoom · drag empty space to pan · Ctrl+Z to undo
+      </footer>
+    </div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
