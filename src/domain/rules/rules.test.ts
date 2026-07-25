@@ -1,8 +1,24 @@
 import { describe, it, expect } from "vitest";
 import { warhammer } from "./warhammer.js";
 import { makeDnd5e } from "./dnd5e.js";
+import { getRuleSystem, RULE_SYSTEMS } from "./index.js";
 import { inchesToMm, mmToInches } from "../units.js";
 import type { BaseShape } from "../geometry.js";
+
+describe("rule system registry", () => {
+  it("resolves each registered system by its own id", () => {
+    expect(getRuleSystem("warhammer").id).toBe("warhammer");
+    expect(getRuleSystem("dnd5e").id).toBe("dnd5e");
+    // The registry keys must match the systems they point at.
+    for (const [id, rs] of Object.entries(RULE_SYSTEMS)) {
+      expect(rs.id).toBe(id);
+    }
+  });
+
+  it("throws on an unknown system id rather than returning undefined", () => {
+    expect(() => getRuleSystem("pathfinder")).toThrow(/Unknown rule system/);
+  });
+});
 
 const target = (x: number, y: number, base: BaseShape, facing = 0) => ({
   pos: { x, y },
