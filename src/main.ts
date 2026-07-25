@@ -44,7 +44,19 @@ seed();
 const host = document.getElementById("board-host")!;
 const readout = document.getElementById("readout")!;
 const board = new Board(host, sync, (t) => (readout.textContent = t));
-await board.init();
+// Renderer init (PixiJS WebGL/WebGPU) can fail on machines without a usable GPU
+// context. Don't let that abort the whole module — the toolbar/dropdowns below
+// must still populate. Surface the reason on-page instead of a silent blank.
+try {
+  await board.init();
+} catch (err) {
+  console.error("Board renderer failed to initialise:", err);
+  host.innerHTML =
+    `<div style="padding:1rem;color:#ef476f;font:14px/1.5 system-ui">` +
+    `Renderer failed to start (WebGL/WebGPU unavailable). ` +
+    `Enable hardware acceleration in your browser and reload.<br><br>` +
+    `<code style="color:#ffd166">${String((err as Error)?.message ?? err)}</code></div>`;
+}
 
 // --- toolbar wiring ---
 // The toolbar is organised into three sections:
