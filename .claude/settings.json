@@ -1,20 +1,38 @@
 {
-  "env": {
-    "PATH": "/mnt/c/Users/glenn/projects/.nvm/versions/node/v24.1.0/bin:${PATH}"
-  },
   "permissions": {
     "allow": [
-      "Bash(export PATH=*)",
       "Bash(npm run typecheck:*)",
       "Bash(npm test:*)",
       "Bash(npm ci:*)",
+      "Bash(npm install:*)",
       "Bash(npm run build:*)",
       "Bash(npm run dev:*)",
+      "Bash(npm run preview:*)",
       "Bash(npx vitest:*)",
       "Bash(vitest:*)",
+      "Bash(node scripts/*)",
+      "Bash(node --version)",
+      "Bash(make help)",
+      "Bash(make test)",
+      "Bash(make build)",
+      "Bash(make typecheck)",
       "Bash(git status:*)",
       "Bash(git diff:*)",
-      "Bash(git log:*)"
+      "Bash(git log:*)",
+      "Bash(git show:*)",
+      "Bash(git branch:*)",
+      "Bash(git fetch:*)",
+      "Bash(git switch:*)",
+      "Bash(gh pr view:*)",
+      "Bash(gh pr list:*)",
+      "Bash(gh pr status:*)",
+      "Bash(gh repo view:*)",
+      "Bash(gh issue list:*)",
+      "Bash(gh issue view:*)",
+      "Bash(ls:*)",
+      "Bash(find:*)",
+      "Bash(grep:*)",
+      "Bash(rg:*)"
     ]
   }
 }
