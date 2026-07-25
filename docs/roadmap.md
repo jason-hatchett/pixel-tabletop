@@ -23,24 +23,32 @@ See also: [vision.md](vision.md) (why this exists, the pillars) ·
 4. **Geometry ships with a brute-force test** (ADR-0004, pillar 4). No occlusion
    or clearance math lands without a ground-truth scan agreeing.
 5. **Multiplayer-readiness is a running constraint, not a phase gate.** Because
-   state stays serializable and deterministic from Phase 0, Phase 6
+   state stays serializable and deterministic from Phase 0, Phase 7
    (multiplayer) stays a *new `BoardSync`*, not a rewrite — so we don't defer
-   discipline to "later."
+   discipline to "later." Persistence (Phase 2) is the client-side proof of this:
+   the saved envelope is exactly what the server will hydrate a room from.
 6. **Sequence by dependency, then by user-visible payoff.** Terrain movement
    rules unblock coherency and budgets, so the rules chain (movement →
    coherency) keeps its order. **North-star change (DRAFT):** flat image-file
    terrain (JPEG/PNG maps and terrain art) is now the near-term priority — it is
    the highest-payoff "looks like our table" wedge and is independent of the
    rules chain (Phase 0 only). It is pulled forward to **Phase 1**; the former
-   Phase 1 (template/interaction polish) and the rules chain shift down one. It
+   Phase 1 (template/interaction polish) and the rules chain shift down. It
    **displaces procedural pixel-art tiles & sprites** (the former Phase 4), which
-   drop later to Phase 5 — image files give players a real map now, procedural
-   tilesets are the slower art-pipeline follow-up. Fog of war (Phase 7) is
+   drop later to Phase 6 — image files give players a real map now, procedural
+   tilesets are the slower art-pipeline follow-up. Fog of war (Phase 8) is
    sequenced right after image terrain conceptually but still depends on a
    viewpoint model; see its spec. Spec drafts:
    [specs/image-terrain.md](specs/image-terrain.md),
    [specs/fog-of-war.md](specs/fog-of-war.md) — both DRAFT, pending owner
    approval.
+7. **Settle the state shape before the wire freezes.** Anything that changes
+   `BoardState` or the `BoardSync`/`BoardStore` seams lands *before* multiplayer
+   (Phase 7) so the wire format and persisted envelope aren't churned. This is
+   why **board-state persistence is pulled forward to Phase 2** — the versioned
+   envelope and migration seam are expensive to retrofit once the shape grows
+   (units, players, budgets, image terrain); see
+   [architecture/adr-0007-board-state-persistence.md](architecture/adr-0007-board-state-persistence.md).
 
 ## Phases at a glance
 
@@ -48,13 +56,14 @@ See also: [vision.md](vision.md) (why this exists, the pillars) ·
 |-------|-------|-----------|
 | 0 | Current scaffold (done) | — |
 | 1 | **Image-file terrain (JPEG/PNG maps & terrain)** (DRAFT priority) | 0 (independent) |
-| 2 | Template & movement-interaction polish | 0 |
-| 3 | Movement & terrain rules | 0, 2 |
-| 4 | Unit coherency (40k) + AoS "wholly within" | 3 |
-| 5 | Pixel-art tiles & tileset loader | 0 (independent) |
-| 6 | Multiplayer (WebSocketSync + authoritative server) | 0, 2, 3 (states must be settled) |
-| 7 | Fog of war / vision + initiative + dice | 6 (fog), 0 (initiative/dice) |
-| 8+ | Rules-automation stretch | 4, 7 |
+| 2 | **Board-state persistence (save / load)** (priority) | 0 (independent) |
+| 3 | Template & movement-interaction polish | 0 |
+| 4 | Movement & terrain rules | 0, 3 |
+| 5 | Unit coherency (40k) + AoS "wholly within" | 4 |
+| 6 | Pixel-art tiles & tileset loader | 0 (independent) |
+| 7 | Multiplayer (WebSocketSync + authoritative server) | 0, 2, 3, 4 (states must be settled) |
+| 8 | Fog of war / vision + initiative + dice | 7 (fog), 0 (initiative/dice) |
+| 9+ | Rules-automation stretch | 5, 8 |
 
 ---
 
@@ -112,12 +121,60 @@ and D&D equally (spec §"Value to each audience").
 
 **Dependencies.** Phase 0 only — independent of the rules chain, purely a new
 serializable placement + render-layer skin. **Displaces** the former "pixel-art
-tiles & tileset loader" phase, which moves to Phase 5 (procedural tilesets are
+tiles & tileset loader" phase, which moves to Phase 6 (procedural tilesets are
 the slower art-pipeline follow-up; image files ship the map now).
 
 ---
 
-## Phase 2 — Template & movement-interaction polish
+## Phase 2 — Board-state persistence (save / load) — priority
+
+**Goal.** Stop losing work: a solo user's board survives a browser reload, and can
+be exported as a portable scenario file to back up or share — with no server. The
+durable format is *exactly* what the Phase-7 authoritative server will hydrate a
+room from, so nothing here is thrown away when multiplayer lands. Full decision:
+[architecture/adr-0007-board-state-persistence.md](architecture/adr-0007-board-state-persistence.md).
+
+**Deliverables** (product outcomes; the *how* is the architect's — ADR-0007).
+- **Resume on reload** — the working board autosaves (debounced) to browser
+  storage and is restored at boot; a fresh install falls back to `seed()`
+  (`main.ts:41`). Serves both audiences equally: a mid-game 40k table or a D&D
+  encounter you can walk away from and come back to.
+- **Save & share a scenario file** — export the current board to a JSON file and
+  re-import it on any device, round-tripping to an identical `BoardState`. The only
+  cross-device story before the server, and a backup independent of browser storage.
+- **Load through the reducer** — loading replaces whole state via a new
+  `loadState` `Action` (nothing bypasses `applyAction`, ADR-0002); it records one
+  undo step so an accidental load is recoverable. This is the same primitive the
+  server later uses to hydrate a late joiner or load a scenario into a room.
+- **Versioned envelope + migration seam** — every persisted board is a
+  `{ schemaVersion, savedAt, state }` envelope, never a bare `BoardState`; import
+  validates, refuses a version newer than the code, treats a missing version as v1,
+  and defaults additive fields via `normalize()`. This is the piece that is
+  expensive to retrofit once the shape grows (units, players, budgets, image
+  terrain).
+
+**Definition of done.** A board survives reload; export → import round-trips to an
+identical `BoardState`; load flows through `applyAction` as `loadState` and is one
+undoable step, covered by a vitest per the domain-change checklist; a malformed or
+too-new file is refused cleanly with **no** partial state; **no** domain type gains
+a pixel field (mm-only invariant intact, ADR-0001) and image-terrain envelopes stay
+*references*, not embedded raster bytes, so the localStorage quota holds. Deferred
+out of this slice (ADR-0007 §7): named multi-board management, IndexedDB, asset
+caching, and server persistence (Phase 7).
+
+**Dependencies.** Phase 0 only — the pure reducer and the `BoardSync` seam already
+exist; persistence sits *beside* the seam as a `BoardStore` collaborator (ADR-0007),
+not a new `BoardSync`. Independent of the rules chain, like Phase 1. Sequenced here —
+right after image terrain and **before** the rules chain grows `BoardState` (units,
+budgets) and before Phase 7 freezes the wire format — so later state additions arrive
+as ordered migrations against an existing versioned envelope rather than a retrofit
+(decide-rule 7). Complements Phase 1: image terrain adds the first new serializable
+placement state, and persistence makes it survive reload and become shareable — kept
+as a reference so the envelope stays small.
+
+---
+
+## Phase 3 — Template & movement-interaction polish
 
 **Goal.** Finish the analysis-overlay toolset and the small interaction gaps so
 the single-player experience feels complete before deeper rules land.
@@ -131,7 +188,7 @@ the single-player experience feels complete before deeper rules land.
 - **AoS "wholly within" check (measurement form)** — a helper answering "is base
   A wholly within R inches of point/region P" using existing clearance geometry;
   surfaced as a template/measurement readout. (The coherency *rule* use lands in
-  Phase 3; this delivers the geometric primitive first.)
+  Phase 5; this delivers the geometric primitive first.)
 - **Redo stack** — complement `LocalSync.undo()` (`sync.ts:64`) with `redo()`;
   extend the `BoardSync` interface and history model. Tracked open question
   (game-design.md §9).
@@ -142,11 +199,11 @@ brute-force-checked unit test; undo/redo round-trips a drag as one step and is
 exposed in the toolbar.
 
 **Dependencies.** Phase 0. Redo touches the `BoardSync` interface, so land it
-before Phase 6 hardens that seam.
+before Phase 7 hardens that seam.
 
 ---
 
-## Phase 3 — Movement & terrain rules
+## Phase 4 — Movement & terrain rules
 
 **Goal.** Make walls and terrain affect *movement*, not just sight and cover —
 the first rules that constrain where a token may go.
@@ -168,12 +225,12 @@ spent/remaining and updates as you drag; all path-cost math has tests. New
 state (e.g. a token's move allowance / spent) rides `applyAction` as `Action`s
 (ADR-0002).
 
-**Dependencies.** Phase 0 (terrain/wall state), Phase 2 (measurement primitives
+**Dependencies.** Phase 0 (terrain/wall state), Phase 3 (measurement primitives
 reused for path cost).
 
 ---
 
-## Phase 4 — Unit coherency (40k) + AoS "wholly within"
+## Phase 5 — Unit coherency (40k) + AoS "wholly within"
 
 **Goal.** First multi-model *unit* rules: keep a 40k unit legally coherent, and
 apply AoS "wholly within" to coherency/objectives.
@@ -182,7 +239,7 @@ apply AoS "wholly within" to coherency/objectives.
 - **40k unit coherency** — a notion of a unit (a group of tokens) and a
   coherency check (each model within 2" of another, larger units needing two
   neighbours). Live warn/violation readout.
-- **AoS "wholly within"** — reuse the Phase 2 "wholly within" geometric
+- **AoS "wholly within"** — reuse the Phase 3 "wholly within" geometric
   primitive for coherency and objective-range checks.
 - **Decision: shared helper vs per-system.** Resolve the open question
   (game-design.md §9) on whether coherency lives as a shared domain helper the
@@ -194,13 +251,13 @@ apply AoS "wholly within" to coherency/objectives.
 model that breaks coherency warns; "wholly within" checks are brute-force tested;
 the shared-vs-per-system decision is captured as an ADR.
 
-**Dependencies.** Phase 3 (movement, so coherency is checked as models move);
-Phase 2 ("wholly within" primitive). Introduces unit grouping into
-`BoardState` — a state-shape change to settle **before** Phase 6.
+**Dependencies.** Phase 4 (movement, so coherency is checked as models move);
+Phase 3 ("wholly within" primitive). Introduces unit grouping into
+`BoardState` — a state-shape change to settle **before** Phase 7.
 
 ---
 
-## Phase 5 — Pixel-art tiles & tileset loader
+## Phase 6 — Pixel-art tiles & tileset loader
 
 **Goal.** Deliver the *procedural* "pixel-art" in the name: swap vector
 `Graphics` for nearest-neighbour textures and load procedural tilesets.
@@ -228,13 +285,13 @@ all zooms and rotates correctly; a sample tileset loads into a map background;
 **no** domain type gains a pixel field (mm-only invariant intact, ADR-0001).
 
 **Dependencies.** Phase 0 only. Can run in parallel with the rules chain
-(Phases 2–4); sequence by art availability. Purely render-layer, so it never
+(Phases 3–5); sequence by art availability. Purely render-layer, so it never
 touches the domain or `BoardSync`. Shares the "art is a lens" render approach
 with Phase 1 (image terrain).
 
 ---
 
-## Phase 6 — Multiplayer (WebSocketSync + authoritative server)
+## Phase 7 — Multiplayer (WebSocketSync + authoritative server)
 
 **Goal.** Real-time shared play on an authoritative server — the payoff ADR-0002
 was built for.
@@ -246,6 +303,10 @@ was built for.
 - **Authoritative server** — validates each intent against the active
   `RuleSystem`, assigns a sequence number, broadcasts the accepted `Action`.
   Every client replays the same stream and converges (ADR-0002).
+- **Server-side persistence** — the room baseline is the same `SavedBoard`
+  envelope solo save/load ships in Phase 2 (ADR-0007); `loadState` hydrates a late
+  joiner or loads a scenario into a room. Reuses the Phase-2 envelope + migration
+  path verbatim — a `BoardStore` swap, not a rewrite.
 - **Reconciliation & ownership** — rebase the optimistic layer on divergence;
   enforce `Token.ownerId` (`state.ts:23`) for who may move what.
 - **Ephemeral state stays local** — selection, transient overlays, camera are UI
@@ -256,13 +317,14 @@ was built for.
 originating client; ownership is enforced server-side; the domain and render
 layers are **unchanged** except for wiring the new `BoardSync` (proving the seam).
 
-**Dependencies.** Phases 0, 2, 3, and ideally 4 — the `BoardState` shape (units,
-movement allowances) and the `BoardSync` interface (redo) should be settled so
-the wire protocol isn't churned. This is why state-shape phases precede it.
+**Dependencies.** Phases 0, 2, 3, 4, and ideally 5 — the persistence envelope +
+`loadState` primitive (Phase 2) and the `BoardState` shape (units, movement
+allowances) and `BoardSync` interface (redo) should be settled so the wire
+protocol isn't churned. This is why state-shape phases precede it.
 
 ---
 
-## Phase 7 — Fog of war / vision + initiative + dice
+## Phase 8 — Fog of war / vision + initiative + dice
 
 **Goal.** Per-player vision, turn order, and shared randomness — the table
 utilities that make sessions playable end-to-end.
@@ -288,14 +350,14 @@ owner approval**).
 initiative order is shared and advances via the reducer; a roll broadcasts one
 agreed result to all clients.
 
-**Dependencies.** Fog of war depends on Phase 6 (whose viewpoint only means
+**Dependencies.** Fog of war depends on Phase 7 (whose viewpoint only means
 something with multiple players/seats) and reuses Phase 0 LoS. Initiative and
 dice are mostly `Action` additions and could land earlier if desired, but are
 grouped here as the "playable session" bundle.
 
 ---
 
-## Phase 8+ — Rules-automation stretch
+## Phase 9+ — Rules-automation stretch
 
 **Goal.** Move from *positioning and measuring* toward *automating sequences* —
 explicitly a non-goal today (vision.md non-goals), revisited only once the
@@ -309,7 +371,7 @@ foundation above is solid.
 
 **Definition of done.** Deferred — scoped per feature when the phase is opened.
 
-**Dependencies.** Phase 4 (units/coherency) and Phase 7 (initiative), plus a
+**Dependencies.** Phase 5 (units/coherency) and Phase 8 (initiative), plus a
 stable multiplayer core.
 
 ---
@@ -322,13 +384,14 @@ one without violating any.
 | Phase | mm ground truth (P1) | Pure/deterministic (P2) | Rules as plugins (P3) | Verified geometry (P4) | Honest edge-to-edge (P5) |
 |-------|:---:|:---:|:---:|:---:|:---:|
 | 1 Image-file terrain | ✓ (art is a lens; mm stay ground truth) | ✓ (placement as Actions) | · | ✓ (no pixel-inferred occlusion) | · |
-| 2 Template/interaction polish | · | ✓ (redo on the reducer) | · | ✓ (wholly-within test) | ✓ (line template, blast snap) |
-| 3 Movement & terrain rules | ✓ (path cost in mm) | ✓ (budgets as Actions) | ✓ (per-system move rules) | ✓ (path-crossing tests) | ✓ (difficult terrain cost) |
-| 4 Coherency + wholly-within | · | ✓ (unit state via reducer) | ✓ (shared-vs-per-system ADR) | ✓ (coherency brute-force) | ✓ (2" edge-aware checks) |
-| 5 Pixel-art tiles | ✓ (art is a lens, not mm) | · | · | · | · |
-| 6 Multiplayer | ✓ (portable mm state) | ✓ (convergence is the point) | ✓ (server validates via RuleSystem) | · | · |
-| 7 Fog/initiative/dice | · | ✓ (initiative/dice as Actions) | ✓ (per-system vision rules) | ✓ (fog derived from tested LoS) | ✓ (LoS is area-to-area) |
-| 8+ Automation | · | ✓ | ✓ (new games/mechanics) | ✓ | ✓ |
+| 2 Board-state persistence | ✓ (mm serialized verbatim; no pixel field) | ✓ (load through the reducer; pure migrations) | · | · | · |
+| 3 Template/interaction polish | · | ✓ (redo on the reducer) | · | ✓ (wholly-within test) | ✓ (line template, blast snap) |
+| 4 Movement & terrain rules | ✓ (path cost in mm) | ✓ (budgets as Actions) | ✓ (per-system move rules) | ✓ (path-crossing tests) | ✓ (difficult terrain cost) |
+| 5 Coherency + wholly-within | · | ✓ (unit state via reducer) | ✓ (shared-vs-per-system ADR) | ✓ (coherency brute-force) | ✓ (2" edge-aware checks) |
+| 6 Pixel-art tiles | ✓ (art is a lens, not mm) | · | · | · | · |
+| 7 Multiplayer | ✓ (portable mm state) | ✓ (convergence is the point) | ✓ (server validates via RuleSystem) | · | · |
+| 8 Fog/initiative/dice | · | ✓ (initiative/dice as Actions) | ✓ (per-system vision rules) | ✓ (fog derived from tested LoS) | ✓ (LoS is area-to-area) |
+| 9+ Automation | · | ✓ | ✓ (new games/mechanics) | ✓ | ✓ |
 
 ## Design gaps worth tracking
 
@@ -340,23 +403,28 @@ game-design.md §9:
   placement in plain-JSON `BoardState` (ADR-0001/0002). Whether it extends
   `TerrainPiece` (`terrain.ts:41`) or is a new type, and how LoS/cover relate to
   it, are open architect calls — see [specs/image-terrain.md](specs/image-terrain.md).
-- **`BoardState` has no unit grouping.** Coherency (Phase 4) needs a first-class
-  "unit" (a set of token ids). Settle this shape before Phase 6 freezes the wire
+- **Persistence open questions (ADR-0007).** The envelope/migration home, whether
+  `loadState` is a logged wire action or a control frame, board identity for
+  multi-board, and how a persisted `players` registry re-binds to live seats are
+  tracked in ADR-0007 §"Open questions" and must be settled before Phase 7 freezes
+  the wire format.
+- **`BoardState` has no unit grouping.** Coherency (Phase 5) needs a first-class
+  "unit" (a set of token ids). Settle this shape before Phase 7 freezes the wire
   format.
-- **No movement allowance on `Token`.** Budgets (Phase 3) need a per-token
+- **No movement allowance on `Token`.** Budgets (Phase 4) need a per-token
   allowance/spent field — new serializable state, new `Action`s.
 - **`BoardSync` has no `redo`.** The interface exposes `undo` only
-  (`sync.ts:20`); redo (Phase 2) is an interface change to make before the seam
+  (`sync.ts:20`); redo (Phase 3) is an interface change to make before the seam
   hardens.
 - **No player/session model.** `Token.ownerId` exists (`state.ts:23`) but there
-  is no notion of players, seats, or a GM. Multiplayer (Phase 6) and fog
-  (Phase 7) both need one; whose-viewpoint for fog is unresolved — see
+  is no notion of players, seats, or a GM. Multiplayer (Phase 7) and fog
+  (Phase 8) both need one; whose-viewpoint for fog is unresolved — see
   [specs/fog-of-war.md](specs/fog-of-war.md).
-- **Tileset format undefined.** Phase 5 needs a decided asset format + loader
+- **Tileset format undefined.** Phase 6 needs a decided asset format + loader
   contract; capture it as an ADR when chosen.
 - **Non-convex terrain and `umbraOfOccluder`.** The occluder path assumes convex
   polygons (ADR-0004); concave terrain must be decomposed. Worth an explicit
   decomposition step or a documented authoring constraint before richer terrain
   shapes land.
 - **Coherency: shared helper vs per-system** is still an open decision
-  (game-design.md §9) that Phase 4 must resolve and record as an ADR.
+  (game-design.md §9) that Phase 5 must resolve and record as an ADR.

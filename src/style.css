@@ -39,6 +39,16 @@ html, body, #app {
 }
 #toolbar button:hover { background: #2c3547; }
 
+#toolbar input[type="text"] {
+  background: #232a3a;
+  color: #e6e9ef;
+  border: 1px solid #313a50;
+  border-radius: 6px;
+  padding: 5px 8px;
+  font-size: 13px;
+  width: 120px;
+}
+
 /* An active toggle (Grid/Snap/Measure/Template on). */
 #toolbar button.on {
   background: #234c3f;

@@ -51,6 +51,19 @@
           <button id="template-toggle" type="button">Template: off</button>
         </span>
 
+        <span class="divider"></span>
+
+        <!-- Game (save/load) -->
+        <span class="section">
+          <label>Game <input id="game-name" type="text" placeholder="board name" autocomplete="off" /></label>
+          <button id="save-btn" type="button">Save</button>
+          <select id="load-select"><option value="">Load…</option></select>
+          <button id="delete-btn" type="button">Delete</button>
+          <button id="export-btn" type="button">Export</button>
+          <button id="import-btn" type="button">Import</button>
+          <input id="import-file" type="file" accept="application/json,.json" hidden />
+        </span>
+
         <span id="readout" class="readout"></span>
       </header>
       <div id="board-host"></div>

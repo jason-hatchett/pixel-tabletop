@@ -45,7 +45,10 @@ export type Action =
   | { type: "moveTerrain"; id: string; pos: Vec2 }
   | { type: "rotateTerrain"; id: string; facing: number }
   | { type: "removeTerrain"; id: string }
-  | { type: "setSystem"; systemId: string };
+  | { type: "setSystem"; systemId: string }
+  /** Replace the whole board (loading a saved game). `state` must already be
+   * normalized/validated by the persistence layer. */
+  | { type: "loadState"; state: BoardState };
 
 /** Pure, total reducer. Never mutates its input. */
 export function applyAction(state: BoardState, action: Action): BoardState {
@@ -96,6 +99,8 @@ export function applyAction(state: BoardState, action: Action): BoardState {
     }
     case "setSystem":
       return { ...state, systemId: action.systemId };
+    case "loadState":
+      return action.state;
   }
 }
 

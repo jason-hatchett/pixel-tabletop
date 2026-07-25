@@ -7,9 +7,23 @@ import { TEMPLATE_PRESETS, findTemplateSpec } from "./domain/templates.js";
 import { getTerrainOptions, findTerrainOption } from "./domain/terrain.js";
 import { inchesToMm } from "./domain/units.js";
 import type { BaseShape } from "./domain/geometry.js";
+import { LocalBoardStore, localStorageKV, serialize, deserialize } from "./persist/boardStore.js";
 
 // --- state + sync (swap LocalSync for WebSocketSync to go multiplayer) ---
-const sync = new LocalSync(makeInitialState());
+// Restore the autosaved working board on reload; otherwise seed a demo board.
+const store = new LocalBoardStore(localStorageKV());
+let initialState = makeInitialState();
+let restored = false;
+try {
+  const last = store.getLast();
+  if (last) {
+    initialState = last;
+    restored = true;
+  }
+} catch {
+  /* corrupt autosave — start fresh */
+}
+const sync = new LocalSync(initialState);
 
 // Seed a few models so there's something to drag on first run.
 function seed(): void {
@@ -38,7 +52,7 @@ function seed(): void {
     token: mk("Ogre", 16, 22, { kind: "oval", radiusXMm: 52.5, radiusYMm: 35 }, 0xffd166, 0.6),
   });
 }
-seed();
+if (!restored) seed();
 
 // --- board ---
 const host = document.getElementById("board-host")!;
@@ -189,4 +203,89 @@ measureToggle.addEventListener("click", () => {
 templateToggle.addEventListener("click", () => {
   analysis = analysis === "template" ? "none" : "template";
   apply();
+});
+
+// --- persistence (Game section: save/load by name, export/import) ---
+const gameName = $<HTMLInputElement>("game-name");
+const saveBtn = $<HTMLButtonElement>("save-btn");
+const loadSelect = $<HTMLSelectElement>("load-select");
+const deleteBtn = $<HTMLButtonElement>("delete-btn");
+const exportBtn = $<HTMLButtonElement>("export-btn");
+const importBtn = $<HTMLButtonElement>("import-btn");
+const importFile = $<HTMLInputElement>("import-file");
+
+function refreshLoadList(): void {
+  loadSelect.replaceChildren(new Option("Load…", ""));
+  for (const n of store.list()) loadSelect.appendChild(new Option(n, n));
+}
+refreshLoadList();
+
+// After a full-board load, resync the toolbar to the loaded system.
+function afterLoad(): void {
+  systemSelect.value = systemId();
+  populateItemSelect();
+  board.setShowGrid(gridOn);
+  apply();
+}
+
+// Debounced autosave of the current working board.
+let saveTimer: number | undefined;
+sync.subscribe(() => {
+  clearTimeout(saveTimer);
+  saveTimer = setTimeout(() => {
+    try {
+      store.putLast(sync.getState());
+    } catch {
+      /* storage full/unavailable — ignore */
+    }
+  }, 400);
+});
+
+saveBtn.addEventListener("click", () => {
+  const name = gameName.value.trim();
+  if (!name) return gameName.focus();
+  store.put(name, sync.getState());
+  refreshLoadList();
+  loadSelect.value = name;
+});
+
+loadSelect.addEventListener("change", () => {
+  const name = loadSelect.value;
+  if (!name) return;
+  const s = store.get(name);
+  if (s) {
+    sync.dispatch({ type: "loadState", state: s });
+    gameName.value = name;
+    afterLoad();
+  }
+});
+
+deleteBtn.addEventListener("click", () => {
+  const name = loadSelect.value || gameName.value.trim();
+  if (!name) return;
+  store.delete(name);
+  refreshLoadList();
+});
+
+exportBtn.addEventListener("click", () => {
+  const name = gameName.value.trim() || "board";
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(new Blob([serialize(sync.getState())], { type: "application/json" }));
+  a.download = `${name}.json`;
+  a.click();
+  URL.revokeObjectURL(a.href);
+});
+
+importBtn.addEventListener("click", () => importFile.click());
+importFile.addEventListener("change", async () => {
+  const file = importFile.files?.[0];
+  if (file) {
+    try {
+      sync.dispatch({ type: "loadState", state: deserialize(await file.text()) });
+      afterLoad();
+    } catch (e) {
+      alert(`Import failed: ${(e as Error).message}`);
+    }
+  }
+  importFile.value = "";
 });

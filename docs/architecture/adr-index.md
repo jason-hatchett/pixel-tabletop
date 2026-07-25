@@ -17,6 +17,7 @@ Status values: `Proposed` → `Accepted` → (later) `Superseded` / `Deprecated`
 | [0004](adr-0004-occlusion-by-intersection-over-source-vertices.md) | Occlusion/LoS by intersection-over-source-vertices, verified against brute force | Accepted |
 | [0005](adr-0005-unit-grouping.md) | First-class units as an ordered set of token ids in BoardState | Proposed |
 | [0006](adr-0006-player-session-model.md) | Minimal player/seat model with an explicit GM role | Proposed |
+| [0007](adr-0007-board-state-persistence.md) | Board-state persistence: versioned snapshot, loadState action, BoardStore seam | Proposed |
 
 ## Related
 - Design pillars these decisions serve → [../vision.md](../vision.md)
