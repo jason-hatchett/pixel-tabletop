@@ -15,6 +15,8 @@ Status values: `Proposed` → `Accepted` → (later) `Superseded` / `Deprecated`
 | [0002](adr-0002-deterministic-reducer-multiplayer-seam.md) | Pure deterministic reducer as the multiplayer foundation | Accepted |
 | [0003](adr-0003-rule-systems-as-plugins.md) | Rule systems as plugins implementing a RuleSystem contract | Accepted |
 | [0004](adr-0004-occlusion-by-intersection-over-source-vertices.md) | Occlusion/LoS by intersection-over-source-vertices, verified against brute force | Accepted |
+| [0005](adr-0005-unit-grouping.md) | First-class units as an ordered set of token ids in BoardState | Proposed |
+| [0006](adr-0006-player-session-model.md) | Minimal player/seat model with an explicit GM role | Proposed |
 
 ## Related
 - Design pillars these decisions serve → [../vision.md](../vision.md)
