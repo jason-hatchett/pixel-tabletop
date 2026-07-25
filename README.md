@@ -32,16 +32,27 @@ implementation, not a rewrite.
 
 ## Run it
 
-Requires **Node.js 22+** (pinned in `.nvmrc`; `engines` blocks older). With nvm:
-`nvm use` (or `nvm install 22`). See [docs/context/dev-environment.md](docs/context/dev-environment.md).
+**The portable commands are `npm run …`** — identical on Windows PowerShell, WSL,
+and macOS. Requires **Node.js 22+** (pinned in `.nvmrc`; `engines` blocks older).
 
 ```bash
-nvm use           # → Node 22 (from .nvmrc)
-npm install
-npm run dev       # http://localhost:5173
-npm test          # domain unit tests (vitest)
-npm run typecheck # tsc --noEmit
+npm install        # once (pre* hooks also auto-run this on first dev/test/build)
+npm run dev        # http://localhost:5173
+npm test           # domain unit tests (vitest)
+npm run typecheck  # tsc --noEmit
+npm run build      # production bundle
 ```
+
+Zero-Node option (any OS with Docker): `docker compose up dev` → same server.
+
+| Path | Windows PS | WSL / Linux | macOS |
+|------|:---:|:---:|:---:|
+| `npm run …` | ✅ | ✅ | ✅ |
+| `docker compose …` | ✅ | ✅ | ✅ |
+| `make …` (optional sugar) | ❌ | ✅ | ✅ |
+
+See [docs/context/dev-environment.md](docs/context/dev-environment.md) for the full
+cross-platform guide (nvm, Docker, and why the toolchain is version-pinned).
 
 ## What works now (scaffold)
 

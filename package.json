@@ -8,10 +8,13 @@
     "node": ">=22"
   },
   "scripts": {
+    "predev": "node scripts/ensure-deps.mjs",
     "dev": "vite",
+    "prebuild": "node scripts/ensure-deps.mjs",
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
+    "pretest": "node scripts/ensure-deps.mjs",
     "test": "vitest run"
   },
   "dependencies": {
