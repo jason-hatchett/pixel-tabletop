@@ -8,15 +8,20 @@ help: ## Show this help
 		awk 'BEGIN{FS=":.*?## "}{printf "  \033[36m%-14s\033[0m %s\n", $$1, $$2}'
 
 ## --- local (Node 22 via `nvm use`) ---
-install: ## npm ci (locked install)
+# node_modules auto-installs on first use and re-installs only when the lockfile
+# changes, so `make dev` works straight from a fresh clone (one command).
+node_modules: package-lock.json
 	npm ci
-dev: ## Vite dev server + HMR → http://localhost:5173
+	@touch node_modules
+
+install: node_modules ## Install deps (locked); no-op if up to date
+dev: node_modules ## Vite dev server + HMR → http://localhost:5173
 	npm run dev
-test: ## Run the vitest suite
+test: node_modules ## Run the vitest suite
 	npm test
-typecheck: ## tsc --noEmit
+typecheck: node_modules ## tsc --noEmit
 	npm run typecheck
-build: ## Transpile + bundle to dist/
+build: node_modules ## Transpile + bundle to dist/
 	npm run build
 preview: build ## Serve the production build locally → http://localhost:4173
 	npm run preview
