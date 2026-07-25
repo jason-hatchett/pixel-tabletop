@@ -4,6 +4,9 @@
   "private": true,
   "type": "module",
   "description": "Digital pixel-art tabletop with exact unit positioning for Warhammer 40k / Age of Sigmar and D&D 5E.",
+  "engines": {
+    "node": ">=22"
+  },
   "scripts": {
     "dev": "vite",
     "build": "tsc --noEmit && vite build",

@@ -32,10 +32,11 @@ implementation, not a rewrite.
 
 ## Run it
 
-Requires Node.js 18+. See [docs/context/dev-environment.md](docs/context/dev-environment.md)
-for the exact WSL/Windows commands on this machine.
+Requires **Node.js 22+** (pinned in `.nvmrc`; `engines` blocks older). With nvm:
+`nvm use` (or `nvm install 22`). See [docs/context/dev-environment.md](docs/context/dev-environment.md).
 
 ```bash
+nvm use           # → Node 22 (from .nvmrc)
 npm install
 npm run dev       # http://localhost:5173
 npm test          # domain unit tests (vitest)

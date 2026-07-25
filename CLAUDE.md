@@ -8,19 +8,16 @@ Pixel-art VTT (mm-based) for Warhammer 40k/AoS + D&D 5E. Vite + TS (strict) + Pi
 - Verify claims about LLM APIs/geometry with a quick test, not prose.
 - Trust the harness: don't re-read a file you just edited.
 
-## Commands (Node isn't on the tool PATH)
-**WSL / Linux (this machine):** Node lives in `.nvm`, not on PATH. Prefix first:
+## Commands
+Node is pinned to **22 LTS** (`.nvmrc`; `engines` enforces `>=22`). With nvm:
 ```bash
-export PATH="/mnt/c/Users/glenn/projects/.nvm/versions/node/v24.1.0/bin:$PATH"
-npm run typecheck   # tsc --noEmit
-npm test            # vitest run
+nvm use              # picks up .nvmrc (22); `nvm install 22` first time
+npm run typecheck    # tsc --noEmit
+npm test             # vitest run
+npm run dev          # http://localhost:5173
 ```
-**Windows / PowerShell (alt host):**
-```powershell
-$env:Path = "D:\Program Files\nodejs;" + $env:Path   # prefix first
-& "D:\Program Files\nodejs\npm.cmd" run typecheck
-& "D:\Program Files\nodejs\npm.cmd" test
-```
+Do NOT use the system `/usr/bin/node` (v18) — Vite 6 crashes on it. If `node -v`
+shows v18, your shell didn't load nvm: `source ~/.bashrc` or open a new terminal.
 Dev server: start in background, then use the Browser pane at http://localhost:5173.
 Always run typecheck + test before claiming done.
 
