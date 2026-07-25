@@ -9,13 +9,25 @@ Pixel-art VTT (mm-based) for Warhammer 40k/AoS + D&D 5E. Vite + TS (strict) + Pi
 - Trust the harness: don't re-read a file you just edited.
 
 ## Commands (Node isn't on the tool PATH)
+**WSL / Linux (this machine):** Node lives in `.nvm`, not on PATH. Prefix first:
 ```bash
-$env:Path = "D:\Program Files\nodejs;" + $env:Path   # PowerShell, prefix first
-& "D:\Program Files\nodejs\npm.cmd" run typecheck     # tsc --noEmit
-& "D:\Program Files\nodejs\npm.cmd" test              # vitest
+export PATH="/mnt/c/Users/glenn/projects/.nvm/versions/node/v24.1.0/bin:$PATH"
+npm run typecheck   # tsc --noEmit
+npm test            # vitest run
+```
+**Windows / PowerShell (alt host):**
+```powershell
+$env:Path = "D:\Program Files\nodejs;" + $env:Path   # prefix first
+& "D:\Program Files\nodejs\npm.cmd" run typecheck
+& "D:\Program Files\nodejs\npm.cmd" test
 ```
 Dev server: start in background, then use the Browser pane at http://localhost:5173.
 Always run typecheck + test before claiming done.
+
+## Project docs & agents
+- `docs/` — vision, game-design, roadmap, ADRs (`docs/architecture/`), context/glossary.
+- `.claude/agents/` — specialist subagents; `.claude/skills/` — task workflows.
+- CI: `.github/workflows/ci.yml` runs typecheck + test + build on every PR.
 
 ## Architecture (don't break these)
 - **Everything is millimetres.** Never store pixels or grid squares in the domain. Pixels = camera/zoom; inches/feet/cells = a rule-system interpretation.

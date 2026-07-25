@@ -1,0 +1,20 @@
+{
+  "env": {
+    "PATH": "/mnt/c/Users/glenn/projects/.nvm/versions/node/v24.1.0/bin:${PATH}"
+  },
+  "permissions": {
+    "allow": [
+      "Bash(export PATH=*)",
+      "Bash(npm run typecheck:*)",
+      "Bash(npm test:*)",
+      "Bash(npm ci:*)",
+      "Bash(npm run build:*)",
+      "Bash(npm run dev:*)",
+      "Bash(npx vitest:*)",
+      "Bash(vitest:*)",
+      "Bash(git status:*)",
+      "Bash(git diff:*)",
+      "Bash(git log:*)"
+    ]
+  }
+}

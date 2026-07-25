@@ -32,7 +32,8 @@ implementation, not a rewrite.
 
 ## Run it
 
-Requires Node.js 18+ (install from https://nodejs.org — not currently on this machine).
+Requires Node.js 18+. See [docs/context/dev-environment.md](docs/context/dev-environment.md)
+for the exact WSL/Windows commands on this machine.
 
 ```bash
 npm install
