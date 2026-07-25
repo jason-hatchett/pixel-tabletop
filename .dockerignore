@@ -9,4 +9,6 @@ docs
 npm-debug.log*
 Dockerfile
 .dockerignore
+docker-compose.yml
+Makefile
 README.md

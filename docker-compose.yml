@@ -1,0 +1,37 @@
+# Reproducible dev + preview without installing Node locally.
+#   docker compose up dev        → Vite dev server + HMR at http://localhost:5173
+#   docker compose up web        → production build served by nginx at http://localhost:8080
+#   docker compose run --rm dev npm test   → run the suite in the pinned toolchain
+#
+# Why: this pins Node 22 + Vite + deps inside the container so the app builds and
+# runs identically on every machine — the version drift (Node 18/24/26) that
+# broke local runs cannot happen here.
+
+services:
+  dev:
+    build:
+      context: .
+      target: dev
+    ports:
+      - "5173:5173"
+    volumes:
+      # Live source for HMR…
+      - .:/app
+      # …but keep container-built node_modules (alpine binaries) out of the host mount.
+      - node_modules:/app/node_modules
+    environment:
+      # Vite/chokidar file-watching is unreliable across WSL bind mounts; poll instead.
+      # vite.config.ts enables server.watch.usePolling when this is set.
+      - VITE_USE_POLLING=1
+    command: npm run dev -- --host 0.0.0.0
+
+  # Production build served by nginx — verify the real bundle before deploy.
+  web:
+    build:
+      context: .
+      target: serve
+    ports:
+      - "8080:80"
+
+volumes:
+  node_modules:
