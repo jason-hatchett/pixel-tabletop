@@ -26,11 +26,8 @@ Rendering/camera/input correctness is proven **in the Browser pane at http://loc
 2. Start the dev server in the background and open the Browser pane; exercise the actual interaction you changed (drag a token, zoom, aim a template, draw a wall) and confirm it visually.
 3. For a geometry sanity check you can `await import('/src/domain/walls.ts')` in the browser console; remove any temp `window.__debug` hook after.
 
-## Running typecheck (WSL — Node is not on PATH)
-Prefix EVERY node/npm command with:
-```
-export PATH="/mnt/c/Users/glenn/projects/.nvm/versions/node/v24.1.0/bin:$PATH"
-```
+## Running typecheck (WSL — Node 22 on PATH via nvm)
+Node 22 is on PATH via nvm (`nvm use` if `node -v` is not v22+). Run:
 then `npm run typecheck` (tsc --noEmit). Do not run git.
 
 Report tersely: what changed at which `path:line`, the typecheck result, and what you verified live in the Browser.

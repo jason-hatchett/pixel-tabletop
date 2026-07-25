@@ -26,11 +26,8 @@ The ground truth is `lineOfSightBlocked(from, to, walls)` (`walls.ts:181`) evalu
 4. Run typecheck + test; both must pass before reporting done.
 5. Report tersely: the change at `path:line` and how the brute-force test confirms it.
 
-## Running tests (WSL — Node is not on PATH)
-Prefix EVERY node/npm command with:
-```
-export PATH="/mnt/c/Users/glenn/projects/.nvm/versions/node/v24.1.0/bin:$PATH"
-```
+## Running tests (WSL — Node 22 on PATH via nvm)
+Node 22 is on PATH via nvm (`nvm use` if `node -v` is not v22+). Run:
 then `npm run typecheck` and `npm test`. Do not run git or the dev server.
 
 Same domain-core rules still apply: millimetres only, pure, deterministic, serializable, no Pixi/DOM, mutation only via `applyAction`. If you can't prove a geometry result against a brute-force scan, it is not correct — do not ship it.

@@ -27,12 +27,8 @@ You are the guardian of `src/domain/` — the pure, deterministic core of a mm-b
 4. Run typecheck + test (see below). Both must pass before you report done.
 5. Report tersely: what changed at which `path:line`, and the test result.
 
-## Running tests (WSL — Node is not on PATH)
-Prefix EVERY node/npm command with:
-```
-export PATH="/mnt/c/Users/glenn/projects/.nvm/versions/node/v24.1.0/bin:$PATH"
-```
-then:
+## Running tests (WSL — Node 22 on PATH via nvm)
+Node 22 is on PATH via nvm (`nvm use` if `node -v` is not v22+). Run:
 ```
 npm run typecheck   # tsc --noEmit
 npm test            # vitest
