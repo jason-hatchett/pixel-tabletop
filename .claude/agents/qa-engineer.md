@@ -25,12 +25,8 @@ When asked to validate a diff/branch before merge:
 - Determinism: state is plain JSON; the same action stream must yield identical state — assert on that where relevant. No `Math.random`/`Date.now` in domain or reproducibility-sensitive tests.
 - Match surrounding test style and density. No narration.
 
-## Running typecheck + test (WSL — Node is not on PATH)
-Prefix EVERY node/npm command with:
-```
-export PATH="/mnt/c/Users/glenn/projects/.nvm/versions/node/v24.1.0/bin:$PATH"
-```
-then:
+## Running typecheck + test (WSL — Node 22 on PATH via nvm)
+Node 22 is on PATH via nvm (`nvm use` if `node -v` is not v22+). Run:
 ```
 npm run typecheck   # tsc --noEmit
 npm test            # vitest run

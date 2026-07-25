@@ -173,14 +173,23 @@ cross-platform guide (nvm, Docker, and why the toolchain is version-pinned).
       wall-based cover, e.g. `26.5" · Out of line of sight · Light cover
       (Rubble (Large))`.
 
-## Next steps (suggested order)
+## Next steps
 
-1. **Template polish** — a "line" template, snap blast center to a target, the AoS "wholly within" check, and a redo stack to complement undo.
-2. **Movement + walls/terrain** — respect `blocksMove`/terrain's `difficult` flag when dragging/snapping; movement-budget validation (spent vs remaining).
-3. **Unit coherency** (40k).
-4. **Pixel-art tiles & sprites** — swap vector Graphics for nearest-neighbour textures; add a map/tileset loader.
-5. **Multiplayer** — implement `WebSocketSync`; stand up an authoritative server that validates intents against the rule system and broadcasts sequenced actions.
-6. **Fog of war / vision**, initiative tracker, dice.
+The phased plan lives in **[docs/roadmap.md](docs/roadmap.md)** (single source of
+truth). Near-term priority is **flat image-file terrain** (Phase 1); tracked work
+is in [GitHub issues](https://github.com/jason-hatchett/pixel-tabletop/issues)
+(#4–#9) across milestones.
+
+## Working on this
+
+- **[CONTRIBUTING.md](CONTRIBUTING.md)** — how we work (portable `npm run …`,
+  Node 22, branch→PR flow, the Definition of Done).
+- **[docs/asdlc.md](docs/asdlc.md)** — the dev cycle: any prompt is triaged and
+  routed to the right specialist + gates.
+- **[docs/](docs/)** — [vision](docs/vision.md), [game-design](docs/game-design.md),
+  [roadmap](docs/roadmap.md), ADRs ([docs/architecture/](docs/architecture/)),
+  specs ([docs/specs/](docs/specs/)), [testing](docs/testing.md).
+- `.claude/agents/` — specialist agents; `.claude/skills/` — task workflows.
 
 ## Key files to read first
 

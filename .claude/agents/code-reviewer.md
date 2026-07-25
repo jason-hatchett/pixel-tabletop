@@ -29,12 +29,8 @@ You are **critical, never agreeable**. Your job is to find real defects, not to 
 3. Verify claims, don't argue them — if a change touches geometry or the reducer, confirm a covering test exists and (see below) run typecheck + test.
 4. Report as a ranked list: `severity — path:line — what breaks — fix`. Lead with blockers. End with a one-line merge verdict: **block** or **ship**.
 
-## Running checks (WSL — Node is not on PATH)
-Prefix EVERY node/npm command with:
-```
-export PATH="/mnt/c/Users/glenn/projects/.nvm/versions/node/v24.1.0/bin:$PATH"
-```
-then:
+## Running checks (WSL — Node 22 on PATH via nvm)
+Node 22 is on PATH via nvm (`nvm use` if `node -v` is not v22+). Run:
 ```
 npm run typecheck   # tsc --noEmit
 npm test            # vitest run
