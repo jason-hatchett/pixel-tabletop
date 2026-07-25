@@ -8,6 +8,28 @@ Pixel-art VTT (mm-based) for Warhammer 40k/AoS + D&D 5E. Vite + TS (strict) + Pi
 - Verify claims about LLM APIs/geometry with a quick test, not prose.
 - Trust the harness: don't re-read a file you just edited.
 
+## ASDLC — handling any prompt
+Triage every request and run the matching cycle; full playbook in `docs/asdlc.md`.
+**Match effort to the ask** — a typo fix skips framing; a feature runs the whole loop.
+
+1. **Frame** — restate the outcome + acceptance criteria. If the ask is PM-level
+   (an outcome, not a spec), infer the criteria and state your assumption.
+2. **Route** to the lead specialist(s) in `.claude/agents/`:
+   - domain/reducer logic → `domain-guardian` · new game/ruleset → `rules-plugin-author`
+   - LoS/shadow/umbra/clearance → `geometry-verifier` (**brute-force scan required**)
+   - canvas/camera/toolbar/input → `render-engineer` · fewer clicks/steps → `ux-designer`
+   - measured perf → `perf-profiler` (measure first) · docs/config drift → `docs-maintainer`
+   - scope/priority/specs → `product-manager` · issues/milestones → `technical-pm`
+   - cross-cutting/precedent → `architect` (write an ADR, status Proposed)
+3. **Build** — smallest change that meets the criteria; match surrounding style.
+4. **Verify — gates, ALL must pass:** Node 22 · `typecheck` · `test` · `test:coverage`
+   core ≥ 80% · geometry brute-force scan if touched · UI checked **live** if render.
+5. **Ship** — never commit to `main`. Use the `ship-change` skill (branch → verify →
+   PR). Run `code-reviewer` on non-trivial diffs. State what you verified vs. didn't.
+
+Parallelize only on **non-overlapping** surfaces (worktree isolation for concurrent
+code); bounded fan-out beats a swarm (token cost).
+
 ## Commands
 Node is pinned to **22 LTS** (`.nvmrc`; `engines` enforces `>=22`). With nvm:
 ```bash
