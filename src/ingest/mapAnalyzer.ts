@@ -41,12 +41,15 @@ export interface AnalyzeOptions {
   closeRadius?: number;
   /** Min solid-core radius (px) for an interior blob to survive as a column. */
   columnRadius?: number;
+  /** Douglas–Peucker tolerance (px): larger = fewer, smoother segments. 0 disables. */
+  simplifyEps?: number;
 }
 
 const DEFAULT_FLOOR_THRESHOLD = 90;
-const DEFAULT_MIN_SEGMENT_PX = 2;
+const DEFAULT_MIN_SEGMENT_PX = 1;
 const DEFAULT_CLOSE_RADIUS = 1;
 const DEFAULT_COLUMN_RADIUS = 2;
+const DEFAULT_SIMPLIFY_EPS = 1.5;
 
 /** Floor mask: 1 where the pixel reads as room floor, else 0. */
 function floorMask(img: PixelBuffer, threshold: number): Uint8Array {
@@ -165,46 +168,157 @@ function fillInteriorHolesKeepSolid(mask: Uint8Array, w: number, h: number, soli
   for (let i = 0; i < w * h; i++) if (interior[i] === 1 && solid[i] === 0) mask[i] = 1;
 }
 
-/** Vertical boundary run-segments [xLine, yStart, yEnd) in pixels. */
-function verticalSegments(mask: Uint8Array, w: number, h: number): [number, number, number][] {
-  const segs: [number, number, number][] = [];
-  for (let x = 0; x <= w; x++) {
-    let run = -1;
-    for (let y = 0; y < h; y++) {
-      const leftFloor = x > 0 && mask[y * w + (x - 1)] === 1;
-      const rightFloor = x < w && mask[y * w + x] === 1;
-      const edge = leftFloor !== rightFloor;
-      if (edge) {
-        if (run < 0) run = y;
-      } else if (run >= 0) {
-        segs.push([x, run, y]);
-        run = -1;
-      }
-    }
-    if (run >= 0) segs.push([x, run, h]);
-  }
-  return segs;
+interface Edge {
+  ex: number;
+  ey: number;
+  used: boolean;
 }
 
-/** Horizontal boundary run-segments [yLine, xStart, xEnd) in pixels. */
-function horizontalSegments(mask: Uint8Array, w: number, h: number): [number, number, number][] {
-  const segs: [number, number, number][] = [];
-  for (let y = 0; y <= h; y++) {
-    let run = -1;
+/**
+ * Trace the floor/non-floor boundary as closed rectilinear contours (loops of
+ * lattice points, in px). Directed edges keep floor on the right so they chain
+ * head-to-tail; at a saddle the right-most turn is taken. Each room outline and
+ * each interior column-hole yields its own loop.
+ */
+function traceContours(mask: Uint8Array, w: number, h: number): Vec2[][] {
+  const floor = (x: number, y: number): boolean => x >= 0 && y >= 0 && x < w && y < h && mask[y * w + x] === 1;
+  const W1 = w + 1;
+  const vkey = (x: number, y: number): number => y * W1 + x;
+  const out = new Map<number, Edge[]>();
+  const add = (sx: number, sy: number, ex: number, ey: number): void => {
+    const k = vkey(sx, sy);
+    let a = out.get(k);
+    if (!a) {
+      a = [];
+      out.set(k, a);
+    }
+    a.push({ ex, ey, used: false });
+  };
+  for (let x = 0; x <= w; x++)
+    for (let y = 0; y < h; y++) {
+      const l = floor(x - 1, y);
+      const r = floor(x, y);
+      if (l === r) continue;
+      if (r) add(x, y + 1, x, y); // floor to the +x side → travel up (floor on right)
+      else add(x, y, x, y + 1); // floor to the −x side → travel down
+    }
+  for (let y = 0; y <= h; y++)
     for (let x = 0; x < w; x++) {
-      const topFloor = y > 0 && mask[(y - 1) * w + x] === 1;
-      const bottomFloor = y < h && mask[y * w + x] === 1;
-      const edge = topFloor !== bottomFloor;
-      if (edge) {
-        if (run < 0) run = x;
-      } else if (run >= 0) {
-        segs.push([y, run, x]);
-        run = -1;
+      const t = floor(x, y - 1);
+      const b = floor(x, y);
+      if (t === b) continue;
+      if (b) add(x, y, x + 1, y);
+      else add(x + 1, y, x, y);
+    }
+
+  const contours: Vec2[][] = [];
+  const maxSteps = w * h * 4 + 16;
+  for (const [startK, arr] of out) {
+    for (const e0 of arr) {
+      if (e0.used) continue;
+      const loop: Vec2[] = [];
+      let cx = startK % W1;
+      let cy = (startK / W1) | 0;
+      let edge: Edge | null = e0;
+      let guard = 0;
+      while (edge && !edge.used && guard++ < maxSteps) {
+        edge.used = true;
+        loop.push({ x: cx, y: cy });
+        const dirx = edge.ex - cx;
+        const diry = edge.ey - cy;
+        cx = edge.ex;
+        cy = edge.ey;
+        const outs = out.get(vkey(cx, cy));
+        if (!outs) break;
+        // Prefer right turn, then straight, then left (keeps floor on the right).
+        const prefs: [number, number][] = [
+          [-diry, dirx],
+          [dirx, diry],
+          [diry, -dirx],
+        ];
+        let next: Edge | null = null;
+        for (const [px, py] of prefs) {
+          const cand = outs.find((o) => !o.used && o.ex - cx === px && o.ey - cy === py);
+          if (cand) {
+            next = cand;
+            break;
+          }
+        }
+        edge = next ?? outs.find((o) => !o.used) ?? null;
+      }
+      if (loop.length >= 4) contours.push(loop);
+    }
+  }
+  return contours;
+}
+
+/** Rotate a closed loop to start at a corner, so DP doesn't pin a mid-edge vertex. */
+function rotateToCorner(loop: Vec2[]): Vec2[] {
+  const n = loop.length;
+  for (let i = 0; i < n; i++) {
+    const p = loop[(i - 1 + n) % n]!;
+    const c = loop[i]!;
+    const q = loop[(i + 1) % n]!;
+    if (c.x - p.x !== q.x - c.x || c.y - p.y !== q.y - c.y) return loop.slice(i).concat(loop.slice(0, i));
+  }
+  return loop;
+}
+
+/** Perpendicular distance from p to the line a–b (px). */
+function perpDist(p: Vec2, a: Vec2, b: Vec2): number {
+  const dx = b.x - a.x;
+  const dy = b.y - a.y;
+  const len = Math.hypot(dx, dy) || 1;
+  return Math.abs((p.x - a.x) * dy - (p.y - a.y) * dx) / len;
+}
+
+/**
+ * Simplify a CLOSED loop: split at loop[0] and the farthest vertex from it, then
+ * DP each open arc (a closed DP against a zero-length start→end line collapses
+ * the whole loop). Returns the simplified polygon vertices, un-closed.
+ */
+function simplifyClosedLoop(loop: Vec2[], eps: number): Vec2[] {
+  if (loop.length < 4) return loop.slice();
+  let far = 0;
+  let farD = -1;
+  for (let i = 1; i < loop.length; i++) {
+    const dx = loop[i]!.x - loop[0]!.x;
+    const dy = loop[i]!.y - loop[0]!.y;
+    const d = dx * dx + dy * dy;
+    if (d > farD) {
+      farD = d;
+      far = i;
+    }
+  }
+  const arc1 = douglasPeucker(loop.slice(0, far + 1), eps); // loop[0]..loop[far]
+  const arc2 = douglasPeucker(loop.slice(far).concat([loop[0]!]), eps); // loop[far]..loop[0]
+  return arc1.slice(0, -1).concat(arc2.slice(0, -1)); // drop the shared/closing endpoints
+}
+
+/** Douglas–Peucker polyline simplification (fixed endpoints). */
+function douglasPeucker(pts: Vec2[], eps: number): Vec2[] {
+  if (pts.length < 3) return pts.slice();
+  const keep = new Array<boolean>(pts.length).fill(false);
+  keep[0] = true;
+  keep[pts.length - 1] = true;
+  const stack: [number, number][] = [[0, pts.length - 1]];
+  while (stack.length) {
+    const [i, j] = stack.pop()!;
+    let maxD = 0;
+    let idx = -1;
+    for (let k = i + 1; k < j; k++) {
+      const dd = perpDist(pts[k]!, pts[i]!, pts[j]!);
+      if (dd > maxD) {
+        maxD = dd;
+        idx = k;
       }
     }
-    if (run >= 0) segs.push([y, run, w]);
+    if (maxD > eps && idx > 0) {
+      keep[idx] = true;
+      stack.push([i, idx], [idx, j]);
+    }
   }
-  return segs;
+  return pts.filter((_, i) => keep[i]);
 }
 
 /** Reconstruct a blueprint map's walls as mm-space `Wall` segments. */
@@ -220,27 +334,24 @@ export function analyzeMap(img: PixelBuffer, opts: AnalyzeOptions): MapAnalysis 
   if (closeRadius > 0) mask = closeMask(mask, w, h, closeRadius); // bridge thin gridlines
   fillInteriorHolesKeepSolid(mask, w, h, columnRadius); // clean remnants; keep columns as walls
 
+  const eps = opts.simplifyEps ?? DEFAULT_SIMPLIFY_EPS;
   const walls: Wall[] = [];
   let n = 0;
-  for (const [x, y0, y1] of verticalSegments(mask, w, h)) {
-    if (y1 - y0 < minSeg) continue;
-    walls.push({
-      id: `map-wall-${n++}`,
-      a: { x: x * s, y: y0 * s },
-      b: { x: x * s, y: y1 * s },
-      blocksLoS: true,
-      blocksMove: true,
-    });
-  }
-  for (const [y, x0, x1] of horizontalSegments(mask, w, h)) {
-    if (x1 - x0 < minSeg) continue;
-    walls.push({
-      id: `map-wall-${n++}`,
-      a: { x: x0 * s, y: y * s },
-      b: { x: x1 * s, y: y * s },
-      blocksLoS: true,
-      blocksMove: true,
-    });
+  for (const loop of traceContours(mask, w, h)) {
+    const rotated = rotateToCorner(loop);
+    const simp = eps > 0 ? simplifyClosedLoop(rotated, eps) : rotated;
+    for (let i = 0; i < simp.length; i++) {
+      const a = simp[i]!;
+      const b = simp[(i + 1) % simp.length]!; // close the loop
+      if (Math.hypot(b.x - a.x, b.y - a.y) < minSeg) continue;
+      walls.push({
+        id: `map-wall-${n++}`,
+        a: { x: a.x * s, y: a.y * s },
+        b: { x: b.x * s, y: b.y * s },
+        blocksLoS: true,
+        blocksMove: true,
+      });
+    }
   }
   return { walls };
 }
