@@ -1,7 +1,8 @@
 # ADR-0008: Image-terrain placement primitive — a mm-anchored, reference-not-bytes image layer
 
 ## Status
-Proposed
+Accepted (2026-07-25) — Slice A greenlit by owner. ADR-0009 (the Slice B CV
+ingestion built on this primitive) remains Proposed.
 
 ## Context
 Players want to drop their own battlemap or terrain art (a flat JPEG/PNG) onto

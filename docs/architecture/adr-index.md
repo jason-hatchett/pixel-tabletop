@@ -18,7 +18,7 @@ Status values: `Proposed` → `Accepted` → (later) `Superseded` / `Deprecated`
 | [0005](adr-0005-unit-grouping.md) | First-class units as an ordered set of token ids in BoardState | Proposed |
 | [0006](adr-0006-player-session-model.md) | Minimal player/seat model with an explicit GM role | Proposed |
 | [0007](adr-0007-board-state-persistence.md) | Board-state persistence: versioned snapshot, loadState action, BoardStore seam | Accepted |
-| [0008](adr-0008-image-terrain-placement.md) | Image-terrain placement primitive: mm-anchored, reference-not-bytes image layer | Proposed |
+| [0008](adr-0008-image-terrain-placement.md) | Image-terrain placement primitive: mm-anchored, reference-not-bytes image layer | Accepted |
 | [0009](adr-0009-image-map-ingestion.md) | Image-map ingestion: CV extraction at import emits Wall/TerrainPiece via loadState | Proposed |
 
 ## Related
