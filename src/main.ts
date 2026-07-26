@@ -13,6 +13,7 @@ import { decodeImageData } from "./ingest/decode.js";
 import { mmExtentFromSpan, alignEdgeToGrid } from "./ingest/calibrate.js";
 import { detectGrid } from "./ingest/gridDetect.js";
 import { chooseModal } from "./ui/modal.js";
+import { confirmGridModal, type GridConfirmResult } from "./ui/gridConfirm.js";
 
 // Standard Warhammer 40k battlefield sizes (real inches). A 40k map is scaled to
 // one of these physical rectangles rather than grid-detected (40k is gridless).
@@ -353,28 +354,32 @@ async function placeDndImage(file: File): Promise<boolean> {
   const det = detectGrid(img);
 
   if (det) {
-    const cells = Math.round(img.width / det.pxPerCell);
-    const rows = Math.round(img.height / det.pxPerCell);
-    const choice = await chooseModal<"align" | "manual">(
-      "Grid detected",
-      [
-        { label: "Place, aligned to grid", value: "align", sub: `${cells} × ${rows} squares · 1 square = 5 ft` },
-        { label: "Enter width manually instead", value: "manual" },
-      ],
-      { subtitle: `Detected ~${Math.round(det.pxPerCell)}px squares in the image.` },
-    );
-    if (!choice) return false;
-    if (choice === "align") {
-      const mmPerPx = cellMm / det.pxPerCell;
+    // Show the detected grid over the image so the user can verify/adjust the fit.
+    const url = URL.createObjectURL(file);
+    let res: GridConfirmResult | "manual" | null;
+    try {
+      res = await confirmGridModal({
+        imageUrl: url,
+        imgWidth: img.width,
+        imgHeight: img.height,
+        detection: det,
+        cellLabel: "5 ft",
+      });
+    } finally {
+      URL.revokeObjectURL(url);
+    }
+    if (res === null) return false;
+    if (res !== "manual") {
+      const mmPerPx = cellMm / res.pxPerCell;
       const widthMm = img.width * mmPerPx;
       const heightMm = img.height * mmPerPx;
       const st = sync.getState();
-      const leftMm = alignEdgeToGrid(st.widthMm / 2 - widthMm / 2, det.offsetX * mmPerPx, cellMm);
-      const topMm = alignEdgeToGrid(st.heightMm / 2 - heightMm / 2, det.offsetY * mmPerPx, cellMm);
+      const leftMm = alignEdgeToGrid(st.widthMm / 2 - widthMm / 2, res.offsetX * mmPerPx, cellMm);
+      const topMm = alignEdgeToGrid(st.heightMm / 2 - heightMm / 2, res.offsetY * mmPerPx, cellMm);
       placeImage(file, widthMm, heightMm, { x: leftMm + widthMm / 2, y: topMm + heightMm / 2 });
       return true;
     }
-    // fall through to manual
+    // "manual" falls through
   }
 
   const answer = prompt(

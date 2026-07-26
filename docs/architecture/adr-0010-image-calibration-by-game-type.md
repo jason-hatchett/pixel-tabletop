@@ -44,7 +44,9 @@ though grid detection is heuristic CV.
 scale + placement only — no occlusion, no new domain type. Consistent with
 [ADR-0009](adr-0009-image-map-ingestion.md): CV is an import-time authoring aid,
 never a runtime geometry source. The detected result is **shown to the user to
-confirm/adjust before it is trusted** (no silent auto-commit).
+confirm/adjust before it is trusted** — a preview draws the detected gridlines
+over the image with live pitch/offset nudge (`src/ui/gridConfirm.ts`); no silent
+auto-commit.
 
 **mm-only (pillar 1).** All pixel math stops at the ingest boundary; only mm
 (`widthMm`, `heightMm`, `pos`) enters `BoardState` via the ADR-0008 `addImage`
@@ -57,10 +59,9 @@ action.
   first shared CV building block and prefigures ADR-0009's map ingestion.
 - 40k's presets are a fixed list; non-standard tables still use the manual
   known-width path (D&D's fallback is the general escape hatch).
-- Deferred: a *visual* grid-overlay preview (the confirm step is currently a
-  text summary — detected square size + cell count — with accept/adjust);
-  auto-resizing the board to match a chosen battlefield size (needs a board-size
-  action); rotation/skew correction for photographed maps.
+- Deferred: auto-resizing the board to match a chosen battlefield size (needs a
+  board-size action); rotation/skew correction for photographed maps; dragging
+  the preview overlay directly (nudge is via numeric fields today).
 
 ## Relationships
 Extends [ADR-0008](adr-0008-image-terrain-placement.md) (resolves its calibration

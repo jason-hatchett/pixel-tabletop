@@ -145,3 +145,39 @@ html, body, #app {
   cursor: pointer;
 }
 .modal-cancel:hover { color: #e6e9ef; }
+
+/* Grid-confirm preview modal. */
+.modal-preview {
+  display: block;
+  border: 1px solid #313a50;
+  border-radius: 8px;
+  margin-bottom: 12px;
+  max-width: 100%;
+  background: #0b0d12;
+  image-rendering: pixelated;
+}
+.modal-fields { display: flex; gap: 12px; margin-bottom: 12px; flex-wrap: wrap; }
+.modal-fields label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: #8a93a6; }
+.modal-fields input {
+  width: 90px;
+  background: #232a3a;
+  color: #e6e9ef;
+  border: 1px solid #313a50;
+  border-radius: 6px;
+  padding: 5px 8px;
+  font-size: 13px;
+}
+.modal-readout { font-size: 13px; color: #ffd166; margin-bottom: 12px; font-variant-numeric: tabular-nums; }
+.modal-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.modal-actions button {
+  background: #232a3a;
+  color: #e6e9ef;
+  border: 1px solid #313a50;
+  border-radius: 8px;
+  padding: 8px 12px;
+  font-size: 13px;
+  cursor: pointer;
+}
+.modal-actions button:hover { background: #2c3547; }
+.modal-actions .primary { background: #234c3f; border-color: #2e6b57; color: #cdece0; }
+.modal-actions .primary:hover { background: #2a5a4a; }
