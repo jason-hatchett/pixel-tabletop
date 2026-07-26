@@ -8,6 +8,9 @@ import { getTerrainOptions, findTerrainOption } from "./domain/terrain.js";
 import { inchesToMm } from "./domain/units.js";
 import type { BaseShape } from "./domain/geometry.js";
 import { LocalBoardStore, localStorageKV, serialize, deserialize } from "./persist/boardStore.js";
+import { SessionAssetStore } from "./ingest/assetStore.js";
+import { decodeImageFile } from "./ingest/decode.js";
+import { mmExtentFromSpan } from "./ingest/calibrate.js";
 
 // --- state + sync (swap LocalSync for WebSocketSync to go multiplayer) ---
 // Restore the autosaved working board on reload; otherwise seed a demo board.
@@ -58,6 +61,9 @@ if (!restored) seed();
 const host = document.getElementById("board-host")!;
 const readout = document.getElementById("readout")!;
 const board = new Board(host, sync, (t) => (readout.textContent = t));
+// Session-scoped raster store: BoardState holds only assetRefs (ADR-0008).
+const assets = new SessionAssetStore();
+board.setAssetStore(assets);
 // Renderer init (PixiJS WebGL/WebGPU) can fail on machines without a usable GPU
 // context. Don't let that abort the whole module — the toolbar/dropdowns below
 // must still populate. Surface the reason on-page instead of a silent blank.
@@ -288,4 +294,48 @@ importFile.addEventListener("change", async () => {
     }
   }
   importFile.value = "";
+});
+
+// --- map image (Slice A: import + calibrate + place a raster skin) ---
+const imageBtn = $<HTMLButtonElement>("image-btn");
+const imageFile = $<HTMLInputElement>("image-file");
+
+imageBtn.addEventListener("click", () => imageFile.click());
+imageFile.addEventListener("change", async () => {
+  const file = imageFile.files?.[0];
+  if (file) {
+    try {
+      const { width, height } = await decodeImageFile(file);
+      // v1 calibration (manual fallback): state the image's real-world width in
+      // inches; mm is ground truth, so it reads correctly under either ruler.
+      const answer = prompt(
+        `Real-world width of this image, in inches?\n(image is ${width}×${height}px)`,
+        "44",
+      );
+      if (answer !== null) {
+        const inches = Number(answer);
+        if (Number.isFinite(inches) && inches > 0) {
+          const { widthMm, heightMm } = mmExtentFromSpan(width, height, width, inchesToMm(inches));
+          const ref = assets.add(file);
+          const st = sync.getState();
+          sync.dispatch({
+            type: "addImage",
+            image: {
+              id: crypto.randomUUID(),
+              assetRef: ref,
+              pos: { x: st.widthMm / 2, y: st.heightMm / 2 },
+              widthMm,
+              heightMm,
+              rotation: 0,
+            },
+          });
+        } else {
+          alert("Enter a positive number of inches.");
+        }
+      }
+    } catch (e) {
+      alert(`Image import failed: ${(e as Error).message}`);
+    }
+  }
+  imageFile.value = "";
 });
