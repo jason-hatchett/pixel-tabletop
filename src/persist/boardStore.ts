@@ -30,6 +30,7 @@ export function normalize(raw: Partial<BoardState>): BoardState {
     tokens: raw.tokens ?? base.tokens,
     walls: raw.walls ?? base.walls,
     terrain: raw.terrain ?? base.terrain,
+    images: raw.images ?? base.images,
   };
 }
 
