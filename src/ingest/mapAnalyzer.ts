@@ -17,7 +17,9 @@
  */
 
 import type { Wall } from "../domain/walls.js";
+import type { Vec2 } from "../domain/geometry.js";
 import type { PixelBuffer } from "./decode.js";
+import { alignEdgeToGrid } from "./calibrate.js";
 
 export interface MapAnalysis {
   walls: Wall[];
@@ -162,4 +164,44 @@ export function analyzeMap(img: PixelBuffer, opts: AnalyzeOptions): MapAnalysis 
     });
   }
   return { walls };
+}
+
+export interface MapBoardLayout {
+  /** Board size = the image's physical size. */
+  widthMm: number;
+  heightMm: number;
+  /** Where the image's top-left corner sits in board space (grid-aligned). */
+  imageTopLeftMm: Vec2;
+  /** Analyzer walls translated into board space. */
+  walls: Wall[];
+}
+
+/**
+ * Lay a reconstructed map out on a fresh board: board size = image size, the
+ * image placed so its detected grid lands on the board grid (anchored at 0,
+ * pitch `cellMm`), and the analyzer's image-space walls translated to match.
+ * Pure — the caller assembles the `BoardState` and dispatches `loadState`.
+ */
+export function layoutMapBoard(
+  analysis: MapAnalysis,
+  opts: {
+    imgWidth: number;
+    imgHeight: number;
+    mmPerPx: number;
+    cellMm: number;
+    gridOffsetXpx: number;
+    gridOffsetYpx: number;
+  },
+): MapBoardLayout {
+  const { imgWidth, imgHeight, mmPerPx, cellMm, gridOffsetXpx, gridOffsetYpx } = opts;
+  const topLeft: Vec2 = {
+    x: alignEdgeToGrid(0, gridOffsetXpx * mmPerPx, cellMm),
+    y: alignEdgeToGrid(0, gridOffsetYpx * mmPerPx, cellMm),
+  };
+  const walls = analysis.walls.map((w) => ({
+    ...w,
+    a: { x: w.a.x + topLeft.x, y: w.a.y + topLeft.y },
+    b: { x: w.b.x + topLeft.x, y: w.b.y + topLeft.y },
+  }));
+  return { widthMm: imgWidth * mmPerPx, heightMm: imgHeight * mmPerPx, imageTopLeftMm: topLeft, walls };
 }

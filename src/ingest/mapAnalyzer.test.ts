@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { analyzeMap } from "./mapAnalyzer.js";
+import { analyzeMap, layoutMapBoard } from "./mapAnalyzer.js";
 import type { PixelBuffer } from "./decode.js";
 import { hasLineOfSight } from "../domain/los.js";
 
@@ -61,6 +61,38 @@ describe("analyzeMap", () => {
     ]);
     const { walls } = analyzeMap(img, { mmPerPx: 1 });
     expect(walls).toHaveLength(8);
+  });
+
+  it("lays walls out on a board sized to the image, grid-aligned", () => {
+    const analysis = { walls: [{ id: "w0", a: { x: 10, y: 10 }, b: { x: 10, y: 60 }, blocksLoS: true, blocksMove: true }] };
+    const layout = layoutMapBoard(analysis, {
+      imgWidth: 200,
+      imgHeight: 150,
+      mmPerPx: 2,
+      cellMm: 50,
+      gridOffsetXpx: 0, // first gridline already at the image's left edge
+      gridOffsetYpx: 0,
+    });
+    expect(layout.widthMm).toBe(400); // 200 * 2
+    expect(layout.heightMm).toBe(300);
+    // Offset 0 → image sits at board origin; walls unchanged.
+    expect(layout.imageTopLeftMm).toEqual({ x: 0, y: 0 });
+    expect(layout.walls[0]!.a).toEqual({ x: 10, y: 10 });
+  });
+
+  it("shifts the board so a detected gridline lands on the board grid", () => {
+    const analysis = { walls: [{ id: "w0", a: { x: 0, y: 0 }, b: { x: 20, y: 0 }, blocksLoS: true, blocksMove: true }] };
+    // gridOffset 5px × 2mm = 10mm; nearest board gridline (cell 50) is 0 → shift -10.
+    const layout = layoutMapBoard(analysis, {
+      imgWidth: 100,
+      imgHeight: 100,
+      mmPerPx: 2,
+      cellMm: 50,
+      gridOffsetXpx: 5,
+      gridOffsetYpx: 5,
+    });
+    expect(layout.imageTopLeftMm).toEqual({ x: -10, y: -10 });
+    expect(layout.walls[0]!.a).toEqual({ x: -10, y: -10 });
   });
 
   it("extracted walls block line of sight (ADR-0009 DoD)", () => {
