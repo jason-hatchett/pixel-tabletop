@@ -1,7 +1,10 @@
 # ADR-0009: Image-map ingestion — CV extraction at import emits first-class Wall/TerrainPiece via loadState; runtime geometry unchanged
 
 ## Status
-Proposed
+Accepted (2026-07-26) — Slice B greenlit by owner. v1 builds up in cuts: pure
+wall-extraction analyzer first, then the staged-preview review gate + `loadState`
+wiring; icon classification (doors/statues/stairs) and merge-into-current-board
+remain deferred (B2).
 
 ## Context
 The owner re-scoped image-terrain beyond a decorative skin

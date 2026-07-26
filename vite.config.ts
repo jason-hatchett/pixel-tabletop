@@ -10,7 +10,12 @@ export default defineConfig({
   server: {
     port: 5173,
     open: !polling,
-    ...(polling ? { watch: { usePolling: true } } : {}),
+    // Don't watch large sample maps in test-fixtures — copying one in mid-session
+    // locked the file and crashed the watcher (EBUSY). They aren't app sources.
+    watch: {
+      ignored: ["**/test-fixtures/**"],
+      ...(polling ? { usePolling: true } : {}),
+    },
   },
   build: { target: "es2022", sourcemap: true },
 });

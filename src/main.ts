@@ -12,8 +12,13 @@ import { SessionAssetStore } from "./ingest/assetStore.js";
 import { decodeImageData } from "./ingest/decode.js";
 import { mmExtentFromSpan, alignEdgeToGrid } from "./ingest/calibrate.js";
 import { detectGrid } from "./ingest/gridDetect.js";
+import { analyzeMap, layoutMapBoard, type MapStyle } from "./ingest/mapAnalyzer.js";
 import { chooseModal } from "./ui/modal.js";
 import { confirmGridModal, type GridConfirmResult } from "./ui/gridConfirm.js";
+import { confirmWallsModal, type WallsConfirmResult } from "./ui/wallsConfirm.js";
+import type { BoardState } from "./domain/state.js";
+import type { Wall } from "./domain/walls.js";
+import type { PixelBuffer } from "./ingest/decode.js";
 
 // Standard Warhammer 40k battlefield sizes (real inches). A 40k map is scaled to
 // one of these physical rectangles rather than grid-detected (40k is gridless).
@@ -342,11 +347,69 @@ function placeImage(file: File, widthMm: number, heightMm: number, pos?: { x: nu
   });
 }
 
+/** Place the image as an aligned background skin (no walls). */
+function placeAlignedSkin(file: File, img: PixelBuffer, res: GridConfirmResult, mmPerPx: number, cellMm: number): void {
+  const widthMm = img.width * mmPerPx;
+  const heightMm = img.height * mmPerPx;
+  const st = sync.getState();
+  const leftMm = alignEdgeToGrid(st.widthMm / 2 - widthMm / 2, res.offsetX * mmPerPx, cellMm);
+  const topMm = alignEdgeToGrid(st.heightMm / 2 - heightMm / 2, res.offsetY * mmPerPx, cellMm);
+  placeImage(file, widthMm, heightMm, { x: leftMm + widthMm / 2, y: topMm + heightMm / 2 });
+}
+
+/**
+ * Reconstruct a whole board from the map: a fresh BoardState with the extracted
+ * walls plus the source image as a grid-aligned skin beneath them, loaded via
+ * `loadState` (one undoable step, ADR-0009). Replaces the current board.
+ */
+function reconstructMapBoard(
+  file: File,
+  img: PixelBuffer,
+  res: GridConfirmResult,
+  mmPerPx: number,
+  cellMm: number,
+  analysis: ReturnType<typeof analyzeMap>,
+): void {
+  const layout = layoutMapBoard(analysis, {
+    imgWidth: img.width,
+    imgHeight: img.height,
+    mmPerPx,
+    cellMm,
+    gridOffsetXpx: res.offsetX,
+    gridOffsetYpx: res.offsetY,
+  });
+  const ref = assets.add(file);
+  const imgId = crypto.randomUUID();
+  const walls: Record<string, Wall> = {};
+  for (const w of layout.walls) walls[w.id] = w;
+  const board: BoardState = {
+    widthMm: layout.widthMm,
+    heightMm: layout.heightMm,
+    systemId: systemId(),
+    tokens: {},
+    walls,
+    terrain: {},
+    images: {
+      [imgId]: {
+        id: imgId,
+        assetRef: ref,
+        pos: { x: layout.imageTopLeftMm.x + layout.widthMm / 2, y: layout.imageTopLeftMm.y + layout.heightMm / 2 },
+        widthMm: layout.widthMm,
+        heightMm: layout.heightMm,
+        rotation: 0,
+      },
+    },
+  };
+  sync.dispatch({ type: "loadState", state: board });
+  afterLoad();
+}
+
 /**
  * D&D placement: detect the image grid, infer scale (1 image square = 1 board
- * cell), and align the image so its gridlines fall on the board grid. Confirmed
- * with the user before placing; falls back to manual width if detection fails or
- * is rejected. Returns true if the image was placed.
+ * cell), and align the image so its gridlines fall on the board grid. On accept,
+ * offer wall reconstruction (staged preview) or a plain aligned background.
+ * Falls back to manual width if detection fails or is rejected. Returns true if
+ * the image was placed.
  */
 async function placeDndImage(file: File): Promise<boolean> {
   const img = await decodeImageData(file);
@@ -371,12 +434,32 @@ async function placeDndImage(file: File): Promise<boolean> {
     if (res === null) return false;
     if (res !== "manual") {
       const mmPerPx = cellMm / res.pxPerCell;
-      const widthMm = img.width * mmPerPx;
-      const heightMm = img.height * mmPerPx;
-      const st = sync.getState();
-      const leftMm = alignEdgeToGrid(st.widthMm / 2 - widthMm / 2, res.offsetX * mmPerPx, cellMm);
-      const topMm = alignEdgeToGrid(st.heightMm / 2 - heightMm / 2, res.offsetY * mmPerPx, cellMm);
-      placeImage(file, widthMm, heightMm, { x: leftMm + widthMm / 2, y: topMm + heightMm / 2 });
+      // Extract walls (in image px) for a given style — re-run when the user
+      // changes the style in the preview.
+      const analyzePx = (mode: MapStyle): { a: { x: number; y: number }; b: { x: number; y: number } }[] =>
+        analyzeMap(img, { mmPerPx, mode }).walls.map((w) => ({
+          a: { x: w.a.x / mmPerPx, y: w.a.y / mmPerPx },
+          b: { x: w.b.x / mmPerPx, y: w.b.y / mmPerPx },
+        }));
+      const wallsUrl = URL.createObjectURL(file);
+      let result: WallsConfirmResult | null;
+      try {
+        result = await confirmWallsModal({
+          imageUrl: wallsUrl,
+          imgWidth: img.width,
+          imgHeight: img.height,
+          initialMode: "auto",
+          analyze: analyzePx,
+        });
+      } finally {
+        URL.revokeObjectURL(wallsUrl);
+      }
+      if (!result) return false;
+      if (result.action === "reconstruct") {
+        reconstructMapBoard(file, img, res, mmPerPx, cellMm, analyzeMap(img, { mmPerPx, mode: result.mode }));
+      } else {
+        placeAlignedSkin(file, img, res, mmPerPx, cellMm);
+      }
       return true;
     }
     // "manual" falls through
