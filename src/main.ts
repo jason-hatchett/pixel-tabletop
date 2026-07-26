@@ -11,6 +11,15 @@ import { LocalBoardStore, localStorageKV, serialize, deserialize } from "./persi
 import { SessionAssetStore } from "./ingest/assetStore.js";
 import { decodeImageFile } from "./ingest/decode.js";
 import { mmExtentFromSpan } from "./ingest/calibrate.js";
+import { chooseModal } from "./ui/modal.js";
+
+// Standard Warhammer 40k battlefield sizes (real inches). A 40k map is scaled to
+// one of these physical rectangles rather than grid-detected (40k is gridless).
+const BATTLEFIELD_SIZES = [
+  { label: "Incursion", w: 44, h: 30 },
+  { label: "Strike Force", w: 60, h: 44 },
+  { label: "Onslaught", w: 90, h: 44 },
+] as const;
 
 // --- state + sync (swap LocalSync for WebSocketSync to go multiplayer) ---
 // Restore the autosaved working board on reload; otherwise seed a demo board.
@@ -300,42 +309,73 @@ importFile.addEventListener("change", async () => {
 const imageBtn = $<HTMLButtonElement>("image-btn");
 const imageFile = $<HTMLInputElement>("image-file");
 
-imageBtn.addEventListener("click", () => imageFile.click());
-imageFile.addEventListener("change", async () => {
-  const file = imageFile.files?.[0];
-  if (file) {
-    try {
-      const { width, height } = await decodeImageFile(file);
-      // v1 calibration (manual fallback): state the image's real-world width in
-      // inches; mm is ground truth, so it reads correctly under either ruler.
-      const answer = prompt(
-        `Real-world width of this image, in inches?\n(image is ${width}×${height}px)`,
-        "44",
+/** Resolve to the picked file (or null); clears the input for reuse. */
+function pickFile(input: HTMLInputElement): Promise<File | null> {
+  return new Promise((resolve) => {
+    const onChange = (): void => {
+      input.removeEventListener("change", onChange);
+      const f = input.files?.[0] ?? null;
+      input.value = "";
+      resolve(f);
+    };
+    input.addEventListener("change", onChange);
+    input.click();
+  });
+}
+
+/** Place an imported image, sized in mm, centered on the current board. */
+function placeImage(file: File, widthMm: number, heightMm: number): void {
+  const ref = assets.add(file);
+  const st = sync.getState();
+  sync.dispatch({
+    type: "addImage",
+    image: {
+      id: crypto.randomUUID(),
+      assetRef: ref,
+      pos: { x: st.widthMm / 2, y: st.heightMm / 2 },
+      widthMm,
+      heightMm,
+      rotation: 0,
+    },
+  });
+}
+
+imageBtn.addEventListener("click", async () => {
+  try {
+    // Ask game type first (no file needed), then pick the image.
+    const game = await chooseModal<"dnd" | "40k">(
+      "Import map image",
+      [
+        { label: "Dungeons & Dragons 5E", value: "dnd", sub: "Match the image grid to the board grid" },
+        { label: "Warhammer 40k / AoS", value: "40k", sub: "Scale to a standard battlefield size" },
+      ],
+      { subtitle: "What is this map for?" },
+    );
+    if (!game) return;
+
+    const file = await pickFile(imageFile);
+    if (!file) return;
+    const { width, height } = await decodeImageFile(file);
+
+    if (game === "40k") {
+      const size = await chooseModal(
+        "Battlefield size",
+        BATTLEFIELD_SIZES.map((s) => ({ label: s.label, value: s, sub: `${s.w}" × ${s.h}"` })),
+        { subtitle: "The image is scaled to this physical size." },
       );
-      if (answer !== null) {
-        const inches = Number(answer);
-        if (Number.isFinite(inches) && inches > 0) {
-          const { widthMm, heightMm } = mmExtentFromSpan(width, height, width, inchesToMm(inches));
-          const ref = assets.add(file);
-          const st = sync.getState();
-          sync.dispatch({
-            type: "addImage",
-            image: {
-              id: crypto.randomUUID(),
-              assetRef: ref,
-              pos: { x: st.widthMm / 2, y: st.heightMm / 2 },
-              widthMm,
-              heightMm,
-              rotation: 0,
-            },
-          });
-        } else {
-          alert("Enter a positive number of inches.");
-        }
-      }
-    } catch (e) {
-      alert(`Image import failed: ${(e as Error).message}`);
+      if (!size) return;
+      placeImage(file, inchesToMm(size.w), inchesToMm(size.h));
+    } else {
+      // D&D — Cut 1 placeholder: manual width. Grid detection + alignment lands
+      // in Cut 2 and replaces this branch.
+      const answer = prompt(`Real-world width of this image, in inches?\n(image is ${width}×${height}px)`, "44");
+      if (answer === null) return;
+      const inches = Number(answer);
+      if (!Number.isFinite(inches) || inches <= 0) return void alert("Enter a positive number of inches.");
+      const { widthMm, heightMm } = mmExtentFromSpan(width, height, width, inchesToMm(inches));
+      placeImage(file, widthMm, heightMm);
     }
+  } catch (e) {
+    alert(`Image import failed: ${(e as Error).message}`);
   }
-  imageFile.value = "";
 });
