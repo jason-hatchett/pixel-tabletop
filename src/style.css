@@ -158,7 +158,8 @@ html, body, #app {
 }
 .modal-fields { display: flex; gap: 12px; margin-bottom: 12px; flex-wrap: wrap; }
 .modal-fields label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: #8a93a6; }
-.modal-fields input {
+.modal-fields input,
+.modal-fields select {
   width: 90px;
   background: #232a3a;
   color: #e6e9ef;
@@ -167,6 +168,7 @@ html, body, #app {
   padding: 5px 8px;
   font-size: 13px;
 }
+.modal-fields select { width: auto; }
 .modal-readout { font-size: 13px; color: #ffd166; margin-bottom: 12px; font-variant-numeric: tabular-nums; }
 .modal-actions { display: flex; gap: 8px; flex-wrap: wrap; }
 .modal-actions button {

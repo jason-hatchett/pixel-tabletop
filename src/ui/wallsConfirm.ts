@@ -1,33 +1,42 @@
 /**
  * Walls-confirm modal — the staged review gate for map reconstruction
  * (ADR-0009). Shows the imported image with the extracted walls drawn over it on
- * a pan/zoom preview, so the user can check the fit at the edges before trusting
- * the geometry. Resolves "reconstruct" (build a board from the walls), "skin"
- * (place the image as a background only, no walls), or null (cancel).
+ * a pan/zoom preview, so the user can check the fit before trusting the geometry.
+ * A "Map style" dropdown re-extracts live (auto / blueprint / linework) so a
+ * mis-detected style can be corrected. Resolves with the chosen action + style,
+ * or null (cancel).
  *
- * UI-only. Walls are supplied in IMAGE PIXELS so they draw directly in the
- * preview's coordinate space; the caller converts to mm for the board.
+ * UI-only. Walls come back from `analyze(mode)` in IMAGE PIXELS so they draw in
+ * the preview's coordinate space; the caller converts to mm for the board.
  */
 
 import { createImagePreview } from "./imagePreview.js";
+import type { MapStyle } from "../ingest/mapAnalyzer.js";
 
 export interface WallSegmentPx {
   a: { x: number; y: number };
   b: { x: number; y: number };
 }
 
-export type WallsConfirmResult = "reconstruct" | "skin" | null;
+export interface WallsConfirmResult {
+  action: "reconstruct" | "skin";
+  mode: MapStyle;
+}
 
 export interface WallsConfirmOptions {
   imageUrl: string;
   imgWidth: number;
   imgHeight: number;
-  /** Extracted walls, in image-pixel coordinates. */
-  walls: WallSegmentPx[];
+  initialMode: MapStyle;
+  /** Re-extract walls (in image pixels) for a chosen style. */
+  analyze: (mode: MapStyle) => WallSegmentPx[];
 }
 
-export function confirmWallsModal(opts: WallsConfirmOptions): Promise<WallsConfirmResult> {
+export function confirmWallsModal(opts: WallsConfirmOptions): Promise<WallsConfirmResult | null> {
   return new Promise((resolve) => {
+    let mode = opts.initialMode;
+    let walls = opts.analyze(mode);
+
     const backdrop = document.createElement("div");
     backdrop.className = "modal-backdrop";
     const modal = document.createElement("div");
@@ -35,7 +44,7 @@ export function confirmWallsModal(opts: WallsConfirmOptions): Promise<WallsConfi
     modal.setAttribute("role", "dialog");
     modal.setAttribute("aria-modal", "true");
 
-    const close = (v: WallsConfirmResult): void => {
+    const close = (v: WallsConfirmResult | null): void => {
       backdrop.remove();
       document.removeEventListener("keydown", onKey);
       resolve(v);
@@ -48,7 +57,7 @@ export function confirmWallsModal(opts: WallsConfirmOptions): Promise<WallsConfi
     h.textContent = "Confirm extracted walls";
     modal.appendChild(h);
     const sub = document.createElement("p");
-    sub.textContent = "Red lines are the walls detected from the map. Scroll to zoom, drag to pan — check the fit, then reconstruct, or place the image as a plain background instead.";
+    sub.textContent = "Red lines are the walls detected from the map. Scroll to zoom, drag to pan — check the fit. If they're wrong, try a different map style, then reconstruct (or place the image as a plain background).";
     modal.appendChild(sub);
 
     const preview = createImagePreview({
@@ -59,7 +68,7 @@ export function confirmWallsModal(opts: WallsConfirmOptions): Promise<WallsConfi
         ctx.strokeStyle = "rgba(255, 40, 40, 0.9)";
         ctx.lineWidth = 2 / view.z;
         ctx.beginPath();
-        for (const w of opts.walls) {
+        for (const w of walls) {
           ctx.moveTo(w.a.x, w.a.y);
           ctx.lineTo(w.b.x, w.b.y);
         }
@@ -70,20 +79,51 @@ export function confirmWallsModal(opts: WallsConfirmOptions): Promise<WallsConfi
 
     const readout = document.createElement("div");
     readout.className = "modal-readout";
-    readout.textContent = `${opts.walls.length} wall segments detected`;
+    const setReadout = (): void => {
+      readout.textContent = `${walls.length} wall segments detected`;
+    };
+    setReadout();
     modal.appendChild(readout);
 
+    // --- map-style override ---
+    const fields = document.createElement("div");
+    fields.className = "modal-fields";
+    const wrap = document.createElement("label");
+    wrap.textContent = "Map style";
+    const select = document.createElement("select");
+    for (const [value, text] of [
+      ["auto", "Auto-detect"],
+      ["blueprint", "Blueprint (colour background)"],
+      ["linework", "Linework (ink on paper)"],
+    ] as const) {
+      const opt = document.createElement("option");
+      opt.value = value;
+      opt.textContent = text;
+      select.appendChild(opt);
+    }
+    select.value = mode;
+    select.addEventListener("change", () => {
+      mode = select.value as MapStyle;
+      walls = opts.analyze(mode);
+      setReadout();
+      preview.redraw();
+    });
+    wrap.appendChild(select);
+    fields.appendChild(wrap);
+    modal.appendChild(fields);
+
+    // --- actions ---
     const actions = document.createElement("div");
     actions.className = "modal-actions";
     const reconstruct = document.createElement("button");
     reconstruct.type = "button";
     reconstruct.className = "primary";
     reconstruct.textContent = "Reconstruct walls";
-    reconstruct.addEventListener("click", () => close("reconstruct"));
+    reconstruct.addEventListener("click", () => close({ action: "reconstruct", mode }));
     const skin = document.createElement("button");
     skin.type = "button";
     skin.textContent = "Background only";
-    skin.addEventListener("click", () => close("skin"));
+    skin.addEventListener("click", () => close({ action: "skin", mode }));
     const cancel = document.createElement("button");
     cancel.type = "button";
     cancel.textContent = "Cancel";

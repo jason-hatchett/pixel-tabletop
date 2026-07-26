@@ -25,9 +25,13 @@ export interface MapAnalysis {
   walls: Wall[];
 }
 
+export type MapStyle = "auto" | "blueprint" | "linework";
+
 export interface AnalyzeOptions {
   /** Scale from image pixels to board millimetres (from calibration/grid detect). */
   mmPerPx: number;
+  /** Preprocessing style; "auto" (default) detects blueprint vs. linework by colour. */
+  mode?: MapStyle;
   /**
    * Floor classifier threshold on the pixel's minimum channel (0–255). A white
    * room has a high min channel; a saturated background (e.g. blue) has a low
@@ -260,8 +264,8 @@ function traceContours(mask: Uint8Array, w: number, h: number): Vec2[][] {
       while (edge && !edge.used && guard++ < maxSteps) {
         edge.used = true;
         loop.push({ x: cx, y: cy });
-        const dirx = edge.ex - cx;
-        const diry = edge.ey - cy;
+        const dirx: number = edge.ex - cx;
+        const diry: number = edge.ey - cy;
         cx = edge.ex;
         cy = edge.ey;
         const outs = out.get(vkey(cx, cy));
@@ -280,7 +284,9 @@ function traceContours(mask: Uint8Array, w: number, h: number): Vec2[][] {
             break;
           }
         }
-        edge = next ?? outs.find((o) => !o.used) ?? null;
+        // Fallback: any unused edge EXCEPT a U-turn back the way we came (which
+        // would fold the loop on itself). None left → the loop is complete.
+        edge = next ?? outs.find((o) => !o.used && !(o.ex - cx === -dirx && o.ey - cy === -diry)) ?? null;
       }
       if (loop.length >= 4) contours.push(loop);
     }
@@ -349,7 +355,7 @@ function douglasPeucker(pts: Vec2[], eps: number): Vec2[] {
         idx = k;
       }
     }
-    if (maxD > eps && idx > 0) {
+    if (maxD > eps) {
       keep[idx] = true;
       stack.push([i, idx], [idx, j]);
     }
@@ -367,10 +373,13 @@ export function analyzeMap(img: PixelBuffer, opts: AnalyzeOptions): MapAnalysis 
   const columnRadius = opts.columnRadius ?? DEFAULT_COLUMN_RADIUS;
   // Pick preprocessing by map style: a saturated-colour background (blueprint)
   // needs the floor CLOSED to erase gridlines; a grey/white linework map needs
-  // the floor OPENED to bridge broken ink walls and collapse hatching.
-  const linework = opts.openRadius !== undefined || opts.closeRadius !== undefined ? false : isLineworkMap(img);
-  const closeRadius = opts.closeRadius ?? (linework ? 0 : DEFAULT_CLOSE_RADIUS);
-  const openRadius = opts.openRadius ?? (linework ? DEFAULT_OPEN_RADIUS : 0);
+  // the floor OPENED to bridge broken ink walls and collapse hatching. Each
+  // radius is tied to its mode — the other is forced 0, so overriding one knob
+  // never silently applies the opposite morphology.
+  const mode = opts.mode ?? "auto";
+  const linework = mode === "linework" || (mode === "auto" && isLineworkMap(img));
+  const closeRadius = linework ? 0 : (opts.closeRadius ?? DEFAULT_CLOSE_RADIUS);
+  const openRadius = linework ? (opts.openRadius ?? DEFAULT_OPEN_RADIUS) : 0;
   let mask = floorMask(img, threshold);
   if (closeRadius > 0) mask = closeMask(mask, w, h, closeRadius); // erase gridlines
   if (openRadius > 0) mask = openMask(mask, w, h, openRadius); // bridge drawn walls / hatching
@@ -426,14 +435,26 @@ export function layoutMapBoard(
   },
 ): MapBoardLayout {
   const { imgWidth, imgHeight, mmPerPx, cellMm, gridOffsetXpx, gridOffsetYpx } = opts;
+  // Non-negative grid-aligned edge: keep the image/walls on the board (a negative
+  // shift would push a strip off the top-left), aligning to the next gridline.
+  const alignNonNeg = (gridlineOffsetMm: number): number => {
+    const t = alignEdgeToGrid(0, gridlineOffsetMm, cellMm);
+    return t < 0 ? t + cellMm : t;
+  };
   const topLeft: Vec2 = {
-    x: alignEdgeToGrid(0, gridOffsetXpx * mmPerPx, cellMm),
-    y: alignEdgeToGrid(0, gridOffsetYpx * mmPerPx, cellMm),
+    x: alignNonNeg(gridOffsetXpx * mmPerPx),
+    y: alignNonNeg(gridOffsetYpx * mmPerPx),
   };
   const walls = analysis.walls.map((w) => ({
     ...w,
     a: { x: w.a.x + topLeft.x, y: w.a.y + topLeft.y },
     b: { x: w.b.x + topLeft.x, y: w.b.y + topLeft.y },
   }));
-  return { widthMm: imgWidth * mmPerPx, heightMm: imgHeight * mmPerPx, imageTopLeftMm: topLeft, walls };
+  // Board must contain the shifted image: image spans [topLeft, topLeft + size].
+  return {
+    widthMm: imgWidth * mmPerPx + topLeft.x,
+    heightMm: imgHeight * mmPerPx + topLeft.y,
+    imageTopLeftMm: topLeft,
+    walls,
+  };
 }

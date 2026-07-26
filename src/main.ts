@@ -12,7 +12,7 @@ import { SessionAssetStore } from "./ingest/assetStore.js";
 import { decodeImageData } from "./ingest/decode.js";
 import { mmExtentFromSpan, alignEdgeToGrid } from "./ingest/calibrate.js";
 import { detectGrid } from "./ingest/gridDetect.js";
-import { analyzeMap, layoutMapBoard } from "./ingest/mapAnalyzer.js";
+import { analyzeMap, layoutMapBoard, type MapStyle } from "./ingest/mapAnalyzer.js";
 import { chooseModal } from "./ui/modal.js";
 import { confirmGridModal, type GridConfirmResult } from "./ui/gridConfirm.js";
 import { confirmWallsModal, type WallsConfirmResult } from "./ui/wallsConfirm.js";
@@ -434,26 +434,32 @@ async function placeDndImage(file: File): Promise<boolean> {
     if (res === null) return false;
     if (res !== "manual") {
       const mmPerPx = cellMm / res.pxPerCell;
-      // Extract walls and show the staged review gate: reconstruct, skin-only, or cancel.
-      const analysis = analyzeMap(img, { mmPerPx });
+      // Extract walls (in image px) for a given style — re-run when the user
+      // changes the style in the preview.
+      const analyzePx = (mode: MapStyle): { a: { x: number; y: number }; b: { x: number; y: number } }[] =>
+        analyzeMap(img, { mmPerPx, mode }).walls.map((w) => ({
+          a: { x: w.a.x / mmPerPx, y: w.a.y / mmPerPx },
+          b: { x: w.b.x / mmPerPx, y: w.b.y / mmPerPx },
+        }));
       const wallsUrl = URL.createObjectURL(file);
-      let choice: WallsConfirmResult;
+      let result: WallsConfirmResult | null;
       try {
-        choice = await confirmWallsModal({
+        result = await confirmWallsModal({
           imageUrl: wallsUrl,
           imgWidth: img.width,
           imgHeight: img.height,
-          walls: analysis.walls.map((w) => ({
-            a: { x: w.a.x / mmPerPx, y: w.a.y / mmPerPx },
-            b: { x: w.b.x / mmPerPx, y: w.b.y / mmPerPx },
-          })),
+          initialMode: "auto",
+          analyze: analyzePx,
         });
       } finally {
         URL.revokeObjectURL(wallsUrl);
       }
-      if (choice === null) return false;
-      if (choice === "reconstruct") reconstructMapBoard(file, img, res, mmPerPx, cellMm, analysis);
-      else placeAlignedSkin(file, img, res, mmPerPx, cellMm);
+      if (!result) return false;
+      if (result.action === "reconstruct") {
+        reconstructMapBoard(file, img, res, mmPerPx, cellMm, analyzeMap(img, { mmPerPx, mode: result.mode }));
+      } else {
+        placeAlignedSkin(file, img, res, mmPerPx, cellMm);
+      }
       return true;
     }
     // "manual" falls through

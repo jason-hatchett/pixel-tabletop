@@ -144,9 +144,10 @@ describe("analyzeMap", () => {
     expect(layout.walls[0]!.a).toEqual({ x: 10, y: 10 });
   });
 
-  it("shifts the board so a detected gridline lands on the board grid", () => {
+  it("shifts the board so a detected gridline lands on the board grid (non-negative)", () => {
     const analysis = { walls: [{ id: "w0", a: { x: 0, y: 0 }, b: { x: 20, y: 0 }, blocksLoS: true, blocksMove: true }] };
-    // gridOffset 5px × 2mm = 10mm; nearest board gridline (cell 50) is 0 → shift -10.
+    // gridOffset 5px × 2mm = 10mm; a −10 shift would go off-board, so align to the
+    // next gridline (cell 50): topLeft = 40 → the gridline lands at 50.
     const layout = layoutMapBoard(analysis, {
       imgWidth: 100,
       imgHeight: 100,
@@ -155,8 +156,10 @@ describe("analyzeMap", () => {
       gridOffsetXpx: 5,
       gridOffsetYpx: 5,
     });
-    expect(layout.imageTopLeftMm).toEqual({ x: -10, y: -10 });
-    expect(layout.walls[0]!.a).toEqual({ x: -10, y: -10 });
+    expect(layout.imageTopLeftMm).toEqual({ x: 40, y: 40 });
+    expect(layout.walls[0]!.a).toEqual({ x: 40, y: 40 });
+    // Board grows to contain the shifted image (200mm image + 40mm shift).
+    expect(layout.widthMm).toBe(240);
   });
 
   it("auto-detects a greyscale linework map and extracts its drawn walls", () => {
