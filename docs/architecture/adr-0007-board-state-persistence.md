@@ -1,7 +1,7 @@
 # ADR-0007: Board-state persistence — a `BoardStore` seam, versioned snapshot, a `loadState` action, and phased local→server backends
 
 ## Status
-Proposed
+Accepted (2026-07-25) — Phase 2 slice A verified: typecheck + 76 tests green, core coverage 96.65% (≥80% gate), `loadState` records one undo step, malformed/too-new imports refused cleanly.
 
 ## Context
 Everything a solo user builds today is lost on reload: `main.ts:12` constructs a
