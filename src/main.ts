@@ -1,13 +1,27 @@
 import { Board } from "./render/Board.js";
 import { LocalSync } from "./net/sync.js";
 import { makeInitialState, type Token } from "./domain/state.js";
-import { RULE_SYSTEMS } from "./domain/rules/index.js";
+import { RULE_SYSTEMS, getRuleSystem } from "./domain/rules/index.js";
 import { getBaseOptions, findBaseOption } from "./domain/bases.js";
 import { TEMPLATE_PRESETS, findTemplateSpec } from "./domain/templates.js";
 import { getTerrainOptions, findTerrainOption } from "./domain/terrain.js";
-import { inchesToMm } from "./domain/units.js";
+import { inchesToMm, DEFAULT_CELL_MM } from "./domain/units.js";
 import type { BaseShape } from "./domain/geometry.js";
 import { LocalBoardStore, localStorageKV, serialize, deserialize } from "./persist/boardStore.js";
+import { SessionAssetStore } from "./ingest/assetStore.js";
+import { decodeImageData } from "./ingest/decode.js";
+import { mmExtentFromSpan, alignEdgeToGrid } from "./ingest/calibrate.js";
+import { detectGrid } from "./ingest/gridDetect.js";
+import { chooseModal } from "./ui/modal.js";
+import { confirmGridModal, type GridConfirmResult } from "./ui/gridConfirm.js";
+
+// Standard Warhammer 40k battlefield sizes (real inches). A 40k map is scaled to
+// one of these physical rectangles rather than grid-detected (40k is gridless).
+const BATTLEFIELD_SIZES = [
+  { label: "Incursion", w: 44, h: 30 },
+  { label: "Strike Force", w: 60, h: 44 },
+  { label: "Onslaught", w: 90, h: 44 },
+] as const;
 
 // --- state + sync (swap LocalSync for WebSocketSync to go multiplayer) ---
 // Restore the autosaved working board on reload; otherwise seed a demo board.
@@ -58,6 +72,9 @@ if (!restored) seed();
 const host = document.getElementById("board-host")!;
 const readout = document.getElementById("readout")!;
 const board = new Board(host, sync, (t) => (readout.textContent = t));
+// Session-scoped raster store: BoardState holds only assetRefs (ADR-0008).
+const assets = new SessionAssetStore();
+board.setAssetStore(assets);
 // Renderer init (PixiJS WebGL/WebGPU) can fail on machines without a usable GPU
 // context. Don't let that abort the whole module — the toolbar/dropdowns below
 // must still populate. Surface the reason on-page instead of a silent blank.
@@ -288,4 +305,126 @@ importFile.addEventListener("change", async () => {
     }
   }
   importFile.value = "";
+});
+
+// --- map image (Slice A: import + calibrate + place a raster skin) ---
+const imageBtn = $<HTMLButtonElement>("image-btn");
+const imageFile = $<HTMLInputElement>("image-file");
+
+/** Resolve to the picked file (or null); clears the input for reuse. */
+function pickFile(input: HTMLInputElement): Promise<File | null> {
+  return new Promise((resolve) => {
+    const onChange = (): void => {
+      input.removeEventListener("change", onChange);
+      const f = input.files?.[0] ?? null;
+      input.value = "";
+      resolve(f);
+    };
+    input.addEventListener("change", onChange);
+    input.click();
+  });
+}
+
+/** Place an imported image, sized in mm; centered on the board unless `pos` given. */
+function placeImage(file: File, widthMm: number, heightMm: number, pos?: { x: number; y: number }): void {
+  const ref = assets.add(file);
+  const st = sync.getState();
+  sync.dispatch({
+    type: "addImage",
+    image: {
+      id: crypto.randomUUID(),
+      assetRef: ref,
+      pos: pos ?? { x: st.widthMm / 2, y: st.heightMm / 2 },
+      widthMm,
+      heightMm,
+      rotation: 0,
+    },
+  });
+}
+
+/**
+ * D&D placement: detect the image grid, infer scale (1 image square = 1 board
+ * cell), and align the image so its gridlines fall on the board grid. Confirmed
+ * with the user before placing; falls back to manual width if detection fails or
+ * is rejected. Returns true if the image was placed.
+ */
+async function placeDndImage(file: File): Promise<boolean> {
+  const img = await decodeImageData(file);
+  const cellMm = getRuleSystem(systemId()).grid?.cellMm ?? DEFAULT_CELL_MM;
+  const det = detectGrid(img);
+
+  if (det) {
+    // Show the detected grid over the image so the user can verify/adjust the fit.
+    const url = URL.createObjectURL(file);
+    let res: GridConfirmResult | "manual" | null;
+    try {
+      res = await confirmGridModal({
+        imageUrl: url,
+        imgWidth: img.width,
+        imgHeight: img.height,
+        detection: det,
+        cellLabel: "5 ft",
+      });
+    } finally {
+      URL.revokeObjectURL(url);
+    }
+    if (res === null) return false;
+    if (res !== "manual") {
+      const mmPerPx = cellMm / res.pxPerCell;
+      const widthMm = img.width * mmPerPx;
+      const heightMm = img.height * mmPerPx;
+      const st = sync.getState();
+      const leftMm = alignEdgeToGrid(st.widthMm / 2 - widthMm / 2, res.offsetX * mmPerPx, cellMm);
+      const topMm = alignEdgeToGrid(st.heightMm / 2 - heightMm / 2, res.offsetY * mmPerPx, cellMm);
+      placeImage(file, widthMm, heightMm, { x: leftMm + widthMm / 2, y: topMm + heightMm / 2 });
+      return true;
+    }
+    // "manual" falls through
+  }
+
+  const answer = prompt(
+    `${det ? "" : "No grid detected. "}Real-world width of this image, in inches?\n(image is ${img.width}×${img.height}px)`,
+    "44",
+  );
+  if (answer === null) return false;
+  const inches = Number(answer);
+  if (!Number.isFinite(inches) || inches <= 0) {
+    alert("Enter a positive number of inches.");
+    return false;
+  }
+  const { widthMm, heightMm } = mmExtentFromSpan(img.width, img.height, img.width, inchesToMm(inches));
+  placeImage(file, widthMm, heightMm);
+  return true;
+}
+
+imageBtn.addEventListener("click", async () => {
+  try {
+    // Ask game type first (no file needed), then pick the image.
+    const game = await chooseModal<"dnd" | "40k">(
+      "Import map image",
+      [
+        { label: "Dungeons & Dragons 5E", value: "dnd", sub: "Match the image grid to the board grid" },
+        { label: "Warhammer 40k / AoS", value: "40k", sub: "Scale to a standard battlefield size" },
+      ],
+      { subtitle: "What is this map for?" },
+    );
+    if (!game) return;
+
+    const file = await pickFile(imageFile);
+    if (!file) return;
+
+    if (game === "40k") {
+      const size = await chooseModal(
+        "Battlefield size",
+        BATTLEFIELD_SIZES.map((s) => ({ label: s.label, value: s, sub: `${s.w}" × ${s.h}"` })),
+        { subtitle: "The image is scaled to this physical size." },
+      );
+      if (!size) return;
+      placeImage(file, inchesToMm(size.w), inchesToMm(size.h));
+    } else {
+      await placeDndImage(file);
+    }
+  } catch (e) {
+    alert(`Image import failed: ${(e as Error).message}`);
+  }
 });

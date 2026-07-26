@@ -11,10 +11,13 @@ import {
   Application,
   Container,
   Graphics,
+  Sprite,
+  Texture,
   Text,
   Rectangle,
   type FederatedPointerEvent,
 } from "pixi.js";
+import type { AssetStore } from "../ingest/assetStore.js";
 import type { BoardSync } from "../net/sync.js";
 import type { RuleSystem } from "../domain/rules/index.js";
 import { getRuleSystem } from "../domain/rules/index.js";
@@ -46,6 +49,14 @@ export class Board {
   readonly app = new Application();
   private world = new Container();
   private gridLayer = new Graphics();
+  // Placed raster images (map backgrounds / terrain art). A skin under all
+  // domain layers — carries no occlusion; LoS/cover come from real geometry
+  // (ADR-0008). One Sprite per placement; textures cached by assetRef.
+  private imageLayer = new Container();
+  private imageGfx = new Map<string, Sprite>();
+  private textures = new Map<string, Texture>();
+  private loadingRefs = new Set<string>();
+  private assets: AssetStore | null = null;
   // Terrain pieces: one {fill, pattern (hatch/dots), mask} container per piece
   // so hatch/dot decoration stays clipped to the (possibly rotated) shape.
   private terrainLayer = new Container();
@@ -122,6 +133,9 @@ export class Board {
     this.tplShadow.mask = this.tplMask; // shadows only render inside the template area
 
     this.world.addChild(this.gridLayer);
+    // Placed images sit above the grid fill but below every domain layer — a
+    // pure visual skin (ADR-0008).
+    this.world.addChild(this.imageLayer);
     // LoS lit-area + shadows sit UNDER terrain so a feature's footprint isn't
     // darkened by any shadow — you can always see models inside terrain.
     this.world.addChild(this.losLayer);
@@ -182,6 +196,12 @@ export class Board {
       out.push(basePolygon(piece.pos, piece.base, piece.facing));
     }
     return out;
+  }
+
+  /** Provide the asset store used to resolve `ImagePlacement.assetRef` textures. */
+  setAssetStore(store: AssetStore): void {
+    this.assets = store;
+    this.redraw();
   }
 
   setShowGrid(v: boolean): void {
@@ -664,6 +684,7 @@ export class Board {
   private redraw(): void {
     const st = this.sync.getState();
     this.drawGrid();
+    this.drawImages();
 
     const seenTerrain = new Set<string>();
     for (const t of Object.values(st.terrain)) {
@@ -694,6 +715,75 @@ export class Board {
     this.drawSelection();
     this.drawLoS();
     this.drawTemplate();
+  }
+
+  /**
+   * Draw each placed image as a mm-sized sprite. The placement carries mm size
+   * and rotation; the texture is loaded lazily from the asset store and cached
+   * by assetRef (a redraw follows when it arrives). A placement whose bytes this
+   * session lacks (e.g. after reload before re-import) simply stays hidden — the
+   * mm placement still round-trips in state (ADR-0008).
+   */
+  private drawImages(): void {
+    const st = this.sync.getState();
+    const seen = new Set<string>();
+    for (const img of Object.values(st.images)) {
+      seen.add(img.id);
+      let sp = this.imageGfx.get(img.id);
+      if (!sp) {
+        sp = new Sprite();
+        sp.anchor.set(0.5);
+        this.imageLayer.addChild(sp);
+        this.imageGfx.set(img.id, sp);
+      }
+      const tex = this.textures.get(img.assetRef);
+      if (tex) {
+        sp.texture = tex;
+        sp.visible = true;
+        sp.position.set(img.pos.x, img.pos.y);
+        sp.width = img.widthMm; // mm, in world space
+        sp.height = img.heightMm;
+        sp.rotation = img.rotation;
+      } else {
+        sp.visible = false;
+        void this.ensureTexture(img.assetRef);
+      }
+    }
+    for (const [id, sp] of this.imageGfx) {
+      if (!seen.has(id)) {
+        sp.destroy();
+        this.imageGfx.delete(id);
+      }
+    }
+    // Free the GPU texture and its source blob URL for any assetRef no longer
+    // referenced by state (a removed placement, or a load that replaced it).
+    const liveRefs = new Set(Object.values(st.images).map((i) => i.assetRef));
+    for (const [ref, tex] of this.textures) {
+      if (!liveRefs.has(ref)) {
+        tex.destroy(true);
+        this.textures.delete(ref);
+        this.assets?.remove(ref);
+      }
+    }
+  }
+
+  /** Load and cache a texture for an assetRef, then redraw once it's ready. */
+  private async ensureTexture(ref: string): Promise<void> {
+    if (this.textures.has(ref) || this.loadingRefs.has(ref)) return;
+    const url = this.assets?.url(ref);
+    if (!url) return; // bytes not in this session — placement stays hidden
+    this.loadingRefs.add(ref);
+    try {
+      const el = new Image();
+      el.src = url;
+      await el.decode();
+      this.textures.set(ref, Texture.from(el));
+      this.redraw();
+    } catch (err) {
+      console.error("image asset failed to load:", ref, err);
+    } finally {
+      this.loadingRefs.delete(ref);
+    }
   }
 
   private drawGrid(): void {

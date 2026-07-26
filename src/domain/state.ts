@@ -10,6 +10,7 @@
 import type { BaseShape, Vec2 } from "./geometry.js";
 import type { Wall } from "./walls.js";
 import type { TerrainPiece } from "./terrain.js";
+import type { ImagePlacement, ImagePlacementPatch } from "./images.js";
 
 export interface Token {
   id: string;
@@ -32,6 +33,8 @@ export interface BoardState {
   tokens: Record<string, Token>;
   walls: Record<string, Wall>;
   terrain: Record<string, TerrainPiece>;
+  /** Raster images placed as visual skins (map backgrounds, terrain art). */
+  images: Record<string, ImagePlacement>;
 }
 
 export type Action =
@@ -46,6 +49,9 @@ export type Action =
   | { type: "rotateTerrain"; id: string; facing: number }
   | { type: "removeTerrain"; id: string }
   | { type: "setSystem"; systemId: string }
+  | { type: "addImage"; image: ImagePlacement }
+  | { type: "updateImage"; id: string; patch: ImagePlacementPatch }
+  | { type: "removeImage"; id: string }
   /** Replace the whole board (loading a saved game). `state` must already be
    * normalized/validated by the persistence layer. */
   | { type: "loadState"; state: BoardState };
@@ -99,6 +105,19 @@ export function applyAction(state: BoardState, action: Action): BoardState {
     }
     case "setSystem":
       return { ...state, systemId: action.systemId };
+    case "addImage":
+      return { ...state, images: { ...state.images, [action.image.id]: action.image } };
+    case "updateImage": {
+      const img = state.images[action.id];
+      if (!img) return state;
+      return { ...state, images: { ...state.images, [action.id]: { ...img, ...action.patch } } };
+    }
+    case "removeImage": {
+      if (!state.images[action.id]) return state;
+      const next = { ...state.images };
+      delete next[action.id];
+      return { ...state, images: next };
+    }
     case "loadState":
       return action.state;
   }
@@ -112,5 +131,6 @@ export function makeInitialState(): BoardState {
     tokens: {},
     walls: {},
     terrain: {},
+    images: {},
   };
 }
