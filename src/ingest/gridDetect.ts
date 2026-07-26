@@ -104,8 +104,9 @@ function periodFromEnergy(e: Float64Array): { pxPerCell: number; offset: number 
   mean /= n;
   let ss = 0;
   for (let i = 0; i < n; i++) {
-    s[i] -= mean;
-    ss += s[i]! * s[i]!;
+    const v = s[i]! - mean;
+    s[i] = v;
+    ss += v * v;
   }
   if (ss <= 0) return null;
 
