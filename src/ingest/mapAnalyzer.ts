@@ -37,8 +37,10 @@ export interface AnalyzeOptions {
   floorThreshold?: number;
   /** Drop boundary segments shorter than this many pixels (specks). */
   minSegmentPx?: number;
-  /** Morphological-close radius (px) to fill thin gridlines. 0 disables. */
+  /** Morphological-close radius (px) to fill thin gridlines (blueprint maps). 0 disables. */
   closeRadius?: number;
+  /** Morphological-open radius (px) to bridge broken drawn walls (linework maps). 0 disables. */
+  openRadius?: number;
   /** Min solid-core radius (px) for an interior blob to survive as a column. */
   columnRadius?: number;
   /** Douglas–Peucker tolerance (px): larger = fewer, smoother segments. 0 disables. */
@@ -48,8 +50,29 @@ export interface AnalyzeOptions {
 const DEFAULT_FLOOR_THRESHOLD = 90;
 const DEFAULT_MIN_SEGMENT_PX = 1;
 const DEFAULT_CLOSE_RADIUS = 1;
+const DEFAULT_OPEN_RADIUS = 3;
 const DEFAULT_COLUMN_RADIUS = 2;
 const DEFAULT_SIMPLIFY_EPS = 1.5;
+
+/**
+ * A linework map (walls drawn as black ink on white/parchment) vs. a blueprint
+ * (walls implied by a saturated-colour background). Detected by colour: a
+ * blueprint is mostly saturated pixels; a linework map is greyscale-ish.
+ */
+function isLineworkMap(img: PixelBuffer): boolean {
+  const { data } = img;
+  const px = data.length / 4;
+  const stride = Math.max(1, Math.floor(px / 100000));
+  let saturated = 0;
+  let total = 0;
+  for (let i = 0; i < px; i += stride) {
+    const p = i * 4;
+    const range = Math.max(data[p]!, data[p + 1]!, data[p + 2]!) - Math.min(data[p]!, data[p + 1]!, data[p + 2]!);
+    if (range > 60) saturated++;
+    total++;
+  }
+  return total > 0 && saturated / total < 0.15;
+}
 
 /** Floor mask: 1 where the pixel reads as room floor, else 0. */
 function floorMask(img: PixelBuffer, threshold: number): Uint8Array {
@@ -119,6 +142,19 @@ function closeMask(mask: Uint8Array, w: number, h: number, radius: number): Uint
   let m = mask;
   for (let i = 0; i < radius; i++) m = dilate(m, w, h);
   for (let i = 0; i < radius; i++) m = erode(m, w, h);
+  return m;
+}
+
+/**
+ * Morphological open (erode then dilate) of the floor by `radius` px — bridges
+ * thin gaps in DRAWN walls (broken/anti-aliased black ink) and collapses hatched
+ * "solid rock" (thin white gaps between hatch strokes) into solid non-floor. The
+ * inverse of closeMask: used for linework maps (walls are ink, not colour gaps).
+ */
+function openMask(mask: Uint8Array, w: number, h: number, radius: number): Uint8Array {
+  let m = mask;
+  for (let i = 0; i < radius; i++) m = erode(m, w, h);
+  for (let i = 0; i < radius; i++) m = dilate(m, w, h);
   return m;
 }
 
@@ -328,10 +364,16 @@ export function analyzeMap(img: PixelBuffer, opts: AnalyzeOptions): MapAnalysis 
   const minSeg = opts.minSegmentPx ?? DEFAULT_MIN_SEGMENT_PX;
   const s = opts.mmPerPx;
 
-  const closeRadius = opts.closeRadius ?? DEFAULT_CLOSE_RADIUS;
   const columnRadius = opts.columnRadius ?? DEFAULT_COLUMN_RADIUS;
+  // Pick preprocessing by map style: a saturated-colour background (blueprint)
+  // needs the floor CLOSED to erase gridlines; a grey/white linework map needs
+  // the floor OPENED to bridge broken ink walls and collapse hatching.
+  const linework = opts.openRadius !== undefined || opts.closeRadius !== undefined ? false : isLineworkMap(img);
+  const closeRadius = opts.closeRadius ?? (linework ? 0 : DEFAULT_CLOSE_RADIUS);
+  const openRadius = opts.openRadius ?? (linework ? DEFAULT_OPEN_RADIUS : 0);
   let mask = floorMask(img, threshold);
-  if (closeRadius > 0) mask = closeMask(mask, w, h, closeRadius); // bridge thin gridlines
+  if (closeRadius > 0) mask = closeMask(mask, w, h, closeRadius); // erase gridlines
+  if (openRadius > 0) mask = openMask(mask, w, h, openRadius); // bridge drawn walls / hatching
   fillInteriorHolesKeepSolid(mask, w, h, columnRadius); // clean remnants; keep columns as walls
 
   const eps = opts.simplifyEps ?? DEFAULT_SIMPLIFY_EPS;

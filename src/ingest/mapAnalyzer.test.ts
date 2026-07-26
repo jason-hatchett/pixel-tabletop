@@ -159,6 +159,27 @@ describe("analyzeMap", () => {
     expect(layout.walls[0]!.a).toEqual({ x: -10, y: -10 });
   });
 
+  it("auto-detects a greyscale linework map and extracts its drawn walls", () => {
+    // White paper, a black wall ring (drawn walls) around a room — no saturated
+    // colour, so it routes to the linework (open) path, not the blueprint one.
+    const w = 120;
+    const h = 120;
+    const data = new Uint8ClampedArray(w * h * 4).fill(255);
+    const black = (x: number, y: number): void => {
+      const p = (y * w + x) * 4;
+      data[p] = data[p + 1] = data[p + 2] = 10;
+    };
+    for (let t = 0; t < 4; t++)
+      for (let k = 20; k <= 100; k++) {
+        black(k, 20 + t);
+        black(k, 100 - t);
+        black(20 + t, k);
+        black(100 - t, k);
+      }
+    const { walls } = analyzeMap({ data, width: w, height: h }, { mmPerPx: 1 });
+    expect(walls.length).toBeGreaterThan(0);
+  });
+
   it("extracted walls block line of sight (ADR-0009 DoD)", () => {
     const img = blueprint(80, 80, [[20, 20, 40, 30]]); // room mm x[40,120] y[40,100]
     const { walls } = analyzeMap(img, { mmPerPx: 2 });
