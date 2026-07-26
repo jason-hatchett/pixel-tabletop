@@ -755,6 +755,16 @@ export class Board {
         this.imageGfx.delete(id);
       }
     }
+    // Free the GPU texture and its source blob URL for any assetRef no longer
+    // referenced by state (a removed placement, or a load that replaced it).
+    const liveRefs = new Set(Object.values(st.images).map((i) => i.assetRef));
+    for (const [ref, tex] of this.textures) {
+      if (!liveRefs.has(ref)) {
+        tex.destroy(true);
+        this.textures.delete(ref);
+        this.assets?.remove(ref);
+      }
+    }
   }
 
   /** Load and cache a texture for an assetRef, then redraw once it's ready. */

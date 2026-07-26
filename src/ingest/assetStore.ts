@@ -16,6 +16,8 @@ export interface AssetStore {
   /** Resolve a ref to a loadable URL, or null if this session lacks the bytes. */
   url(ref: string): string | null;
   has(ref: string): boolean;
+  /** Release a ref's bytes (revoke its URL). Called when no placement uses it. */
+  remove(ref: string): void;
 }
 
 export class SessionAssetStore implements AssetStore {
@@ -31,5 +33,12 @@ export class SessionAssetStore implements AssetStore {
   }
   has(ref: string): boolean {
     return this.urls.has(ref);
+  }
+  remove(ref: string): void {
+    const url = this.urls.get(ref);
+    if (url) {
+      URL.revokeObjectURL(url);
+      this.urls.delete(ref);
+    }
   }
 }
