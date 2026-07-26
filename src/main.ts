@@ -1,16 +1,17 @@
 import { Board } from "./render/Board.js";
 import { LocalSync } from "./net/sync.js";
 import { makeInitialState, type Token } from "./domain/state.js";
-import { RULE_SYSTEMS } from "./domain/rules/index.js";
+import { RULE_SYSTEMS, getRuleSystem } from "./domain/rules/index.js";
 import { getBaseOptions, findBaseOption } from "./domain/bases.js";
 import { TEMPLATE_PRESETS, findTemplateSpec } from "./domain/templates.js";
 import { getTerrainOptions, findTerrainOption } from "./domain/terrain.js";
-import { inchesToMm } from "./domain/units.js";
+import { inchesToMm, DEFAULT_CELL_MM } from "./domain/units.js";
 import type { BaseShape } from "./domain/geometry.js";
 import { LocalBoardStore, localStorageKV, serialize, deserialize } from "./persist/boardStore.js";
 import { SessionAssetStore } from "./ingest/assetStore.js";
-import { decodeImageFile } from "./ingest/decode.js";
-import { mmExtentFromSpan } from "./ingest/calibrate.js";
+import { decodeImageData } from "./ingest/decode.js";
+import { mmExtentFromSpan, alignEdgeToGrid } from "./ingest/calibrate.js";
+import { detectGrid } from "./ingest/gridDetect.js";
 import { chooseModal } from "./ui/modal.js";
 
 // Standard Warhammer 40k battlefield sizes (real inches). A 40k map is scaled to
@@ -323,8 +324,8 @@ function pickFile(input: HTMLInputElement): Promise<File | null> {
   });
 }
 
-/** Place an imported image, sized in mm, centered on the current board. */
-function placeImage(file: File, widthMm: number, heightMm: number): void {
+/** Place an imported image, sized in mm; centered on the board unless `pos` given. */
+function placeImage(file: File, widthMm: number, heightMm: number, pos?: { x: number; y: number }): void {
   const ref = assets.add(file);
   const st = sync.getState();
   sync.dispatch({
@@ -332,12 +333,63 @@ function placeImage(file: File, widthMm: number, heightMm: number): void {
     image: {
       id: crypto.randomUUID(),
       assetRef: ref,
-      pos: { x: st.widthMm / 2, y: st.heightMm / 2 },
+      pos: pos ?? { x: st.widthMm / 2, y: st.heightMm / 2 },
       widthMm,
       heightMm,
       rotation: 0,
     },
   });
+}
+
+/**
+ * D&D placement: detect the image grid, infer scale (1 image square = 1 board
+ * cell), and align the image so its gridlines fall on the board grid. Confirmed
+ * with the user before placing; falls back to manual width if detection fails or
+ * is rejected. Returns true if the image was placed.
+ */
+async function placeDndImage(file: File): Promise<boolean> {
+  const img = await decodeImageData(file);
+  const cellMm = getRuleSystem(systemId()).grid?.cellMm ?? DEFAULT_CELL_MM;
+  const det = detectGrid(img);
+
+  if (det) {
+    const cells = Math.round(img.width / det.pxPerCell);
+    const rows = Math.round(img.height / det.pxPerCell);
+    const choice = await chooseModal<"align" | "manual">(
+      "Grid detected",
+      [
+        { label: "Place, aligned to grid", value: "align", sub: `${cells} × ${rows} squares · 1 square = 5 ft` },
+        { label: "Enter width manually instead", value: "manual" },
+      ],
+      { subtitle: `Detected ~${Math.round(det.pxPerCell)}px squares in the image.` },
+    );
+    if (!choice) return false;
+    if (choice === "align") {
+      const mmPerPx = cellMm / det.pxPerCell;
+      const widthMm = img.width * mmPerPx;
+      const heightMm = img.height * mmPerPx;
+      const st = sync.getState();
+      const leftMm = alignEdgeToGrid(st.widthMm / 2 - widthMm / 2, det.offsetX * mmPerPx, cellMm);
+      const topMm = alignEdgeToGrid(st.heightMm / 2 - heightMm / 2, det.offsetY * mmPerPx, cellMm);
+      placeImage(file, widthMm, heightMm, { x: leftMm + widthMm / 2, y: topMm + heightMm / 2 });
+      return true;
+    }
+    // fall through to manual
+  }
+
+  const answer = prompt(
+    `${det ? "" : "No grid detected. "}Real-world width of this image, in inches?\n(image is ${img.width}×${img.height}px)`,
+    "44",
+  );
+  if (answer === null) return false;
+  const inches = Number(answer);
+  if (!Number.isFinite(inches) || inches <= 0) {
+    alert("Enter a positive number of inches.");
+    return false;
+  }
+  const { widthMm, heightMm } = mmExtentFromSpan(img.width, img.height, img.width, inchesToMm(inches));
+  placeImage(file, widthMm, heightMm);
+  return true;
 }
 
 imageBtn.addEventListener("click", async () => {
@@ -355,7 +407,6 @@ imageBtn.addEventListener("click", async () => {
 
     const file = await pickFile(imageFile);
     if (!file) return;
-    const { width, height } = await decodeImageFile(file);
 
     if (game === "40k") {
       const size = await chooseModal(
@@ -366,14 +417,7 @@ imageBtn.addEventListener("click", async () => {
       if (!size) return;
       placeImage(file, inchesToMm(size.w), inchesToMm(size.h));
     } else {
-      // D&D — Cut 1 placeholder: manual width. Grid detection + alignment lands
-      // in Cut 2 and replaces this branch.
-      const answer = prompt(`Real-world width of this image, in inches?\n(image is ${width}×${height}px)`, "44");
-      if (answer === null) return;
-      const inches = Number(answer);
-      if (!Number.isFinite(inches) || inches <= 0) return void alert("Enter a positive number of inches.");
-      const { widthMm, heightMm } = mmExtentFromSpan(width, height, width, inchesToMm(inches));
-      placeImage(file, widthMm, heightMm);
+      await placeDndImage(file);
     }
   } catch (e) {
     alert(`Image import failed: ${(e as Error).message}`);

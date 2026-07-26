@@ -28,3 +28,19 @@ export function mmExtentFromSpan(
   const mmPerPx = spanMm / spanPx;
   return { widthMm: pxWidth * mmPerPx, heightMm: pxHeight * mmPerPx };
 }
+
+/**
+ * Nudge an image edge so a detected gridline lands on the board grid.
+ *
+ * The board grid is anchored at 0 with pitch `cellMm`. Given a starting (e.g.
+ * centered) edge position `edgeMm` and the mm offset of the image's first
+ * gridline from that edge, return the nearest edge position that puts the
+ * gridline exactly on a board gridline — so grid-snapped tokens land in image
+ * squares. Pure.
+ */
+export function alignEdgeToGrid(edgeMm: number, gridlineOffsetMm: number, cellMm: number): number {
+  if (cellMm <= 0) throw new Error("cellMm must be positive.");
+  const gridline = edgeMm + gridlineOffsetMm;
+  const snapped = Math.round(gridline / cellMm) * cellMm;
+  return edgeMm + (snapped - gridline);
+}

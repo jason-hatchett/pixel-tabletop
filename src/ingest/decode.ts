@@ -20,3 +20,23 @@ export async function decodeImageFile(file: Blob): Promise<DecodedImage> {
   bmp.close();
   return dims;
 }
+
+/** Raw RGBA pixels for analysis (grid detection). Kept plain so the analyzer
+ * stays a pure function of a buffer, testable without the DOM. */
+export interface PixelBuffer {
+  data: Uint8ClampedArray;
+  width: number;
+  height: number;
+}
+
+/** Decode a file to its RGBA pixel buffer via an offscreen canvas. */
+export async function decodeImageData(file: Blob): Promise<PixelBuffer> {
+  const bmp = await createImageBitmap(file);
+  const canvas = new OffscreenCanvas(bmp.width, bmp.height);
+  const ctx = canvas.getContext("2d");
+  if (!ctx) throw new Error("2D canvas unavailable for image analysis.");
+  ctx.drawImage(bmp, 0, 0);
+  const img = ctx.getImageData(0, 0, bmp.width, bmp.height);
+  bmp.close();
+  return { data: img.data, width: img.width, height: img.height };
+}
