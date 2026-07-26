@@ -1,14 +1,14 @@
 /**
  * Grid-confirm modal — shows the imported image with the detected grid drawn
- * over it, so the user can see how well detection lines up and nudge the pitch /
- * offset before placing. The preview pans (drag) and zooms (scroll) so the fit
- * can be checked at the edges, where any residual drift shows. Resolves with the
- * (possibly adjusted) grid, "manual" to fall back to typing a width, or null if
- * cancelled.
+ * over it (on a pan/zoom preview so the fit can be checked at the edges) and
+ * lets the user nudge pitch / offset before placing. Resolves with the (possibly
+ * adjusted) grid, "manual" to fall back to typing a width, or null if cancelled.
  *
- * UI-only: draws to its own canvas, touches no app state. The pixel numbers here
- * are converted to mm by the caller (pillar 1).
+ * UI-only: touches no app state. The pixel numbers here are converted to mm by
+ * the caller (pillar 1).
  */
+
+import { createImagePreview } from "./imagePreview.js";
 
 export interface GridConfirmResult {
   pxPerCell: number;
@@ -24,9 +24,6 @@ export interface GridConfirmOptions {
   /** Label for one cell in game units, e.g. "5 ft". */
   cellLabel: string;
 }
-
-const CANVAS_W = 560;
-const CANVAS_H = 460;
 
 export function confirmGridModal(opts: GridConfirmOptions): Promise<GridConfirmResult | "manual" | null> {
   return new Promise((resolve) => {
@@ -57,102 +54,37 @@ export function confirmGridModal(opts: GridConfirmOptions): Promise<GridConfirmR
     sub.textContent = "Green lines show the detected grid. Scroll to zoom, drag to pan — check the fit at the edges, adjust if needed, then place.";
     modal.appendChild(sub);
 
-    // --- preview canvas + viewport (image px -> canvas px: screen = (img - pan) * z) ---
-    const canvas = document.createElement("canvas");
-    canvas.className = "modal-preview";
-    canvas.width = CANVAS_W;
-    canvas.height = CANVAS_H;
-    canvas.style.cursor = "grab";
-    modal.appendChild(canvas);
-    const ctx = canvas.getContext("2d")!;
-    const image = new Image();
-    image.src = opts.imageUrl;
-
-    const fitZoom = Math.min(CANVAS_W / opts.imgWidth, CANVAS_H / opts.imgHeight);
-    let z = fitZoom;
-    let panX = (opts.imgWidth - CANVAS_W / z) / 2; // center the image
-    let panY = (opts.imgHeight - CANVAS_H / z) / 2;
-
     const readout = document.createElement("div");
     readout.className = "modal-readout";
-    modal.appendChild(readout);
 
-    const redraw = (): void => {
-      ctx.setTransform(1, 0, 0, 1, 0, 0);
-      ctx.clearRect(0, 0, CANVAS_W, CANVAS_H);
-      ctx.imageSmoothingEnabled = false;
-      ctx.setTransform(z, 0, 0, z, -panX * z, -panY * z);
-      if (image.complete) ctx.drawImage(image, 0, 0, opts.imgWidth, opts.imgHeight);
-
-      // Grid in image coordinates; 1px screen lines via lineWidth / z.
-      const left = panX;
-      const right = panX + CANVAS_W / z;
-      const top = panY;
-      const bottom = panY + CANVAS_H / z;
-      ctx.strokeStyle = "rgba(6, 214, 160, 0.9)";
-      ctx.lineWidth = 1 / z;
-      ctx.beginPath();
-      for (let x = ox + Math.floor((left - ox) / pitch) * pitch; x <= right; x += pitch) {
-        ctx.moveTo(x, top);
-        ctx.lineTo(x, bottom);
-      }
-      for (let y = oy + Math.floor((top - oy) / pitch) * pitch; y <= bottom; y += pitch) {
-        ctx.moveTo(left, y);
-        ctx.lineTo(right, y);
-      }
-      ctx.stroke();
-      ctx.setTransform(1, 0, 0, 1, 0, 0);
-
-      const cells = Math.round(opts.imgWidth / pitch);
-      const rows = Math.round(opts.imgHeight / pitch);
-      readout.textContent = `≈ ${pitch.toFixed(1)}px squares · ${cells} × ${rows} cells · 1 square = ${opts.cellLabel}`;
-    };
-    image.onload = redraw;
-
-    // Zoom toward the cursor.
-    canvas.addEventListener(
-      "wheel",
-      (e) => {
-        e.preventDefault();
-        const rect = canvas.getBoundingClientRect();
-        const cx = e.clientX - rect.left;
-        const cy = e.clientY - rect.top;
-        const imgX = panX + cx / z;
-        const imgY = panY + cy / z;
-        const factor = e.deltaY < 0 ? 1.15 : 1 / 1.15;
-        z = Math.max(fitZoom * 0.5, Math.min(40, z * factor));
-        panX = imgX - cx / z;
-        panY = imgY - cy / z;
-        redraw();
+    const preview = createImagePreview({
+      imageUrl: opts.imageUrl,
+      imgWidth: opts.imgWidth,
+      imgHeight: opts.imgHeight,
+      overlay: (ctx, view) => {
+        const left = view.panX;
+        const right = view.panX + ctx.canvas.width / view.z;
+        const top = view.panY;
+        const bottom = view.panY + ctx.canvas.height / view.z;
+        ctx.strokeStyle = "rgba(6, 214, 160, 0.9)";
+        ctx.lineWidth = 1 / view.z;
+        ctx.beginPath();
+        for (let x = ox + Math.floor((left - ox) / pitch) * pitch; x <= right; x += pitch) {
+          ctx.moveTo(x, top);
+          ctx.lineTo(x, bottom);
+        }
+        for (let y = oy + Math.floor((top - oy) / pitch) * pitch; y <= bottom; y += pitch) {
+          ctx.moveTo(left, y);
+          ctx.lineTo(right, y);
+        }
+        ctx.stroke();
+        const cells = Math.round(opts.imgWidth / pitch);
+        const rows = Math.round(opts.imgHeight / pitch);
+        readout.textContent = `≈ ${pitch.toFixed(1)}px squares · ${cells} × ${rows} cells · 1 square = ${opts.cellLabel}`;
       },
-      { passive: false },
-    );
-
-    // Drag to pan.
-    let dragging = false;
-    let lastX = 0;
-    let lastY = 0;
-    canvas.addEventListener("pointerdown", (e) => {
-      dragging = true;
-      lastX = e.clientX;
-      lastY = e.clientY;
-      canvas.style.cursor = "grabbing";
-      canvas.setPointerCapture(e.pointerId);
     });
-    canvas.addEventListener("pointermove", (e) => {
-      if (!dragging) return;
-      panX -= (e.clientX - lastX) / z;
-      panY -= (e.clientY - lastY) / z;
-      lastX = e.clientX;
-      lastY = e.clientY;
-      redraw();
-    });
-    const endDrag = (): void => {
-      dragging = false;
-      canvas.style.cursor = "grab";
-    };
-    canvas.addEventListener("pointerup", endDrag);
-    canvas.addEventListener("pointercancel", endDrag);
+    modal.appendChild(preview.canvas);
+    modal.appendChild(readout);
 
     // --- adjust fields ---
     const fields = document.createElement("div");
@@ -169,7 +101,7 @@ export function confirmGridModal(opts: GridConfirmOptions): Promise<GridConfirmR
         const v = Number(input.value);
         if (Number.isFinite(v) && v >= min) {
           onInput(v);
-          redraw();
+          preview.redraw();
         }
       });
       wrap.appendChild(input);
@@ -206,6 +138,5 @@ export function confirmGridModal(opts: GridConfirmOptions): Promise<GridConfirmR
     });
     backdrop.appendChild(modal);
     document.body.appendChild(backdrop);
-    redraw();
   });
 }
