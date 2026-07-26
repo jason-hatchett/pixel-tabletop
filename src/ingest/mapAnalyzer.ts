@@ -37,10 +37,13 @@ export interface AnalyzeOptions {
   floorThreshold?: number;
   /** Drop boundary segments shorter than this many pixels (specks). */
   minSegmentPx?: number;
+  /** Morphological-close radius (px) to fill thin gridlines. 0 disables. */
+  closeRadius?: number;
 }
 
 const DEFAULT_FLOOR_THRESHOLD = 90;
 const DEFAULT_MIN_SEGMENT_PX = 3;
+const DEFAULT_CLOSE_RADIUS = 1;
 
 /** Floor mask: 1 where the pixel reads as room floor, else 0. */
 function floorMask(img: PixelBuffer, threshold: number): Uint8Array {
@@ -51,6 +54,64 @@ function floorMask(img: PixelBuffer, threshold: number): Uint8Array {
     mask[i] = min > threshold ? 1 : 0;
   }
   return mask;
+}
+
+/** 3×3 dilation (floor grows by 1px); out-of-bounds treated as non-floor. */
+function dilate(mask: Uint8Array, w: number, h: number): Uint8Array {
+  const out = new Uint8Array(w * h);
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      let v = 0;
+      for (let dy = -1; dy <= 1 && v === 0; dy++) {
+        for (let dx = -1; dx <= 1; dx++) {
+          const nx = x + dx;
+          const ny = y + dy;
+          if (nx >= 0 && ny >= 0 && nx < w && ny < h && mask[ny * w + nx] === 1) {
+            v = 1;
+            break;
+          }
+        }
+      }
+      out[y * w + x] = v;
+    }
+  }
+  return out;
+}
+
+/** 3×3 erosion (floor shrinks by 1px); out-of-bounds treated as floor so the
+ * image border isn't eaten. */
+function erode(mask: Uint8Array, w: number, h: number): Uint8Array {
+  const out = new Uint8Array(w * h);
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      let v = 1;
+      for (let dy = -1; dy <= 1 && v === 1; dy++) {
+        for (let dx = -1; dx <= 1; dx++) {
+          const nx = x + dx;
+          const ny = y + dy;
+          if (nx < 0 || ny < 0 || nx >= w || ny >= h) continue;
+          if (mask[ny * w + nx] === 0) {
+            v = 0;
+            break;
+          }
+        }
+      }
+      out[y * w + x] = v;
+    }
+  }
+  return out;
+}
+
+/**
+ * Morphological close (dilate then erode) by `radius` px: fills thin non-floor
+ * lines *inside* the floor — the grid drawn on a battlemap — so they don't each
+ * trace a wall, while room boundaries and (much wider) doorways survive.
+ */
+function closeMask(mask: Uint8Array, w: number, h: number, radius: number): Uint8Array {
+  let m = mask;
+  for (let i = 0; i < radius; i++) m = dilate(m, w, h);
+  for (let i = 0; i < radius; i++) m = erode(m, w, h);
+  return m;
 }
 
 /**
@@ -138,7 +199,9 @@ export function analyzeMap(img: PixelBuffer, opts: AnalyzeOptions): MapAnalysis 
   const minSeg = opts.minSegmentPx ?? DEFAULT_MIN_SEGMENT_PX;
   const s = opts.mmPerPx;
 
-  const mask = floorMask(img, threshold);
+  const closeRadius = opts.closeRadius ?? DEFAULT_CLOSE_RADIUS;
+  let mask = floorMask(img, threshold);
+  if (closeRadius > 0) mask = closeMask(mask, w, h, closeRadius); // fill thin gridlines
   fillInteriorHoles(mask, w, h);
 
   const walls: Wall[] = [];

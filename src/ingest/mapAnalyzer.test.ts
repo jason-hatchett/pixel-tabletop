@@ -54,6 +54,36 @@ describe("analyzeMap", () => {
     expect(walls).toHaveLength(4); // still just the room outline
   });
 
+  it("ignores thin non-floor gridlines inside a room (morphological close)", () => {
+    const w = 100;
+    const h = 100;
+    const data = new Uint8ClampedArray(w * h * 4);
+    for (let i = 0; i < w * h; i++) {
+      const p = i * 4;
+      data[p] = 43;
+      data[p + 1] = 143;
+      data[p + 2] = 214; // blue background
+      data[p + 3] = 255;
+    }
+    for (let y = 20; y < 80; y++)
+      for (let x = 20; x < 80; x++) {
+        const p = (y * w + x) * 4;
+        data[p] = data[p + 1] = data[p + 2] = 255; // white room
+      }
+    // Thin gridlines whose min channel (30) reads as non-floor — the failing case.
+    const dark = (x: number, y: number): void => {
+      const p = (y * w + x) * 4;
+      data[p] = 30;
+      data[p + 1] = 90;
+      data[p + 2] = 200;
+    };
+    for (let gx = 30; gx < 80; gx += 10) for (let y = 20; y < 80; y++) dark(gx, y);
+    for (let gy = 30; gy < 80; gy += 10) for (let x = 20; x < 80; x++) dark(x, gy);
+
+    const { walls } = analyzeMap({ data, width: w, height: h }, { mmPerPx: 1 });
+    expect(walls).toHaveLength(4); // closed → just the room outline, not a wall per gridline
+  });
+
   it("extracts two rooms as eight walls", () => {
     const img = blueprint(120, 80, [
       [10, 10, 30, 30],
