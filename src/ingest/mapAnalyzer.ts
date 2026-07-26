@@ -39,11 +39,14 @@ export interface AnalyzeOptions {
   minSegmentPx?: number;
   /** Morphological-close radius (px) to fill thin gridlines. 0 disables. */
   closeRadius?: number;
+  /** Min solid-core radius (px) for an interior blob to survive as a column. */
+  columnRadius?: number;
 }
 
 const DEFAULT_FLOOR_THRESHOLD = 90;
-const DEFAULT_MIN_SEGMENT_PX = 3;
+const DEFAULT_MIN_SEGMENT_PX = 2;
 const DEFAULT_CLOSE_RADIUS = 1;
+const DEFAULT_COLUMN_RADIUS = 2;
 
 /** Floor mask: 1 where the pixel reads as room floor, else 0. */
 function floorMask(img: PixelBuffer, threshold: number): Uint8Array {
@@ -56,7 +59,7 @@ function floorMask(img: PixelBuffer, threshold: number): Uint8Array {
   return mask;
 }
 
-/** 3×3 dilation (floor grows by 1px); out-of-bounds treated as non-floor. */
+/** 3×3 dilation (floor grows 1px); out-of-bounds treated as non-floor. */
 function dilate(mask: Uint8Array, w: number, h: number): Uint8Array {
   const out = new Uint8Array(w * h);
   for (let y = 0; y < h; y++) {
@@ -78,8 +81,8 @@ function dilate(mask: Uint8Array, w: number, h: number): Uint8Array {
   return out;
 }
 
-/** 3×3 erosion (floor shrinks by 1px); out-of-bounds treated as floor so the
- * image border isn't eaten. */
+/** 3×3 erosion (floor shrinks 1px); out-of-bounds treated as floor so the image
+ * border isn't eaten. */
 function erode(mask: Uint8Array, w: number, h: number): Uint8Array {
   const out = new Uint8Array(w * h);
   for (let y = 0; y < h; y++) {
@@ -104,8 +107,10 @@ function erode(mask: Uint8Array, w: number, h: number): Uint8Array {
 
 /**
  * Morphological close (dilate then erode) by `radius` px: fills thin non-floor
- * lines *inside* the floor — the grid drawn on a battlemap — so they don't each
- * trace a wall, while room boundaries and (much wider) doorways survive.
+ * lines inside the floor — a battlemap's grid — so they don't each trace a wall.
+ * Robust to anti-aliased lines (bridges them) where an exact floor-bounded test
+ * fails. Room boundaries, wider doorways, and solid columns all survive; there
+ * is NO interior hole-fill, so columns remain and become wall loops.
  */
 function closeMask(mask: Uint8Array, w: number, h: number, radius: number): Uint8Array {
   let m = mask;
@@ -115,11 +120,13 @@ function closeMask(mask: Uint8Array, w: number, h: number, radius: number): Uint
 }
 
 /**
- * Flip any background pixel not reachable from the image border to floor — an
- * interior hole (a number, a door glyph, a gridline gap) that would otherwise
- * carve a spurious wall inside a room. Only the true exterior stays background.
+ * Fill interior non-floor (not reachable from the image border) — the gridline
+ * remnants and glyph strokes closing leaves behind — EXCEPT solid blobs, which
+ * are kept as walls (columns/pillars). A column survives a morphological opening
+ * of radius `solidRadius` (it has a solid core); a thin line or stroke does not,
+ * so it gets filled. This keeps columns while still cleaning interior noise.
  */
-function fillInteriorHoles(mask: Uint8Array, w: number, h: number): void {
+function fillInteriorHolesKeepSolid(mask: Uint8Array, w: number, h: number, solidRadius: number): void {
   const reachable = new Uint8Array(w * h);
   const stack: number[] = [];
   const push = (x: number, y: number): void => {
@@ -147,7 +154,15 @@ function fillInteriorHoles(mask: Uint8Array, w: number, h: number): void {
     push(x, y - 1);
     push(x, y + 1);
   }
-  for (let i = 0; i < w * h; i++) if (mask[i] === 0 && reachable[i] === 0) mask[i] = 1;
+  const interior = new Uint8Array(w * h);
+  for (let i = 0; i < w * h; i++) interior[i] = mask[i] === 0 && reachable[i] === 0 ? 1 : 0;
+
+  // Opening of the interior set → the solid cores (columns) to preserve.
+  let solid: Uint8Array = interior;
+  for (let i = 0; i < solidRadius; i++) solid = erode(solid, w, h);
+  for (let i = 0; i < solidRadius; i++) solid = dilate(solid, w, h);
+
+  for (let i = 0; i < w * h; i++) if (interior[i] === 1 && solid[i] === 0) mask[i] = 1;
 }
 
 /** Vertical boundary run-segments [xLine, yStart, yEnd) in pixels. */
@@ -200,9 +215,10 @@ export function analyzeMap(img: PixelBuffer, opts: AnalyzeOptions): MapAnalysis 
   const s = opts.mmPerPx;
 
   const closeRadius = opts.closeRadius ?? DEFAULT_CLOSE_RADIUS;
+  const columnRadius = opts.columnRadius ?? DEFAULT_COLUMN_RADIUS;
   let mask = floorMask(img, threshold);
-  if (closeRadius > 0) mask = closeMask(mask, w, h, closeRadius); // fill thin gridlines
-  fillInteriorHoles(mask, w, h);
+  if (closeRadius > 0) mask = closeMask(mask, w, h, closeRadius); // bridge thin gridlines
+  fillInteriorHolesKeepSolid(mask, w, h, columnRadius); // clean remnants; keep columns as walls
 
   const walls: Wall[] = [];
   let n = 0;

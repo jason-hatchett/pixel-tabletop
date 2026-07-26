@@ -4,3 +4,9 @@ coverage/
 .claude/worktrees/
 *.local
 .DS_Store
+
+# Local sample map images for analyzer testing (may be copyrighted); keep the
+# folder's README tracked, not the images.
+test-fixtures/*.jpg
+test-fixtures/*.jpeg
+test-fixtures/*.png

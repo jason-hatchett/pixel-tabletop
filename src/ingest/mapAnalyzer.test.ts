@@ -48,13 +48,23 @@ describe("analyzeMap", () => {
     expect(walls.every((w) => w.blocksLoS && w.blocksMove)).toBe(true);
   });
 
-  it("fills interior holes so numbers/gridlines don't spawn walls", () => {
-    const img = blueprint(80, 80, [[20, 20, 40, 30]], [[35, 30, 4, 4]]); // a blue speck inside
+  it("keeps a solid column inside a room as walls", () => {
+    // A solid 8×8 blob (thicker than a gridline) is a column — kept as a wall loop.
+    const img = blueprint(100, 100, [[20, 20, 60, 60]], []);
+    for (let y = 46; y < 54; y++)
+      for (let x = 46; x < 54; x++) {
+        const p = (y * 100 + x) * 4;
+        img.data[p] = 30;
+        img.data[p + 1] = 90;
+        img.data[p + 2] = 200; // dark blue column pixel
+      }
     const { walls } = analyzeMap(img, { mmPerPx: 1 });
-    expect(walls).toHaveLength(4); // still just the room outline
+    expect(walls.length).toBeGreaterThan(4); // room outline + a loop around the column
+    const columnWall = walls.some((wl) => wl.a.x === wl.b.x && wl.a.x >= 44 && wl.a.x <= 56);
+    expect(columnWall).toBe(true);
   });
 
-  it("ignores thin non-floor gridlines inside a room (morphological close)", () => {
+  it("erases thin floor-bounded gridlines but keeps the room walls", () => {
     const w = 100;
     const h = 100;
     const data = new Uint8ClampedArray(w * h * 4);
