@@ -20,8 +20,26 @@ describe("detectGrid", () => {
     const d = detectGrid(gridImage(200, 200, 25, 10));
     expect(d).not.toBeNull();
     expect(d!.pxPerCell).toBeCloseTo(25, 0);
-    expect(d!.offsetX).toBe(10);
-    expect(d!.offsetY).toBe(10);
+    expect(d!.offsetX).toBeCloseTo(10, 0); // sub-pixel phase, ~10
+    expect(d!.offsetY).toBeCloseTo(10, 0);
+  });
+
+  it("recovers a fractional pitch sub-pixel (no cumulative drift)", () => {
+    // Lines at round(k * 26.8): an integer estimate (27) would drift ~6px across
+    // the width; sub-pixel refinement should land within a fraction of a pixel.
+    const W = 800;
+    const H = 400;
+    const pitch = 26.8;
+    const data = new Uint8ClampedArray(W * H * 4).fill(255);
+    const line = (px: number, py: number): void => {
+      const i = (py * W + px) * 4;
+      data[i] = data[i + 1] = data[i + 2] = 90;
+    };
+    for (let k = 0; k * pitch < W; k++) for (let y = 0; y < H; y++) line(Math.round(k * pitch), y);
+    for (let k = 0; k * pitch < H; k++) for (let x = 0; x < W; x++) line(x, Math.round(k * pitch));
+    const d = detectGrid({ data, width: W, height: H });
+    // Must land clearly below the integer 27 (drift-free), not just "near 27".
+    expect(Math.abs(d!.pxPerCell - pitch)).toBeLessThan(0.15);
   });
 
   it("handles a zero offset (gridline on the edge)", () => {

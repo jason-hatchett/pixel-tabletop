@@ -127,29 +127,46 @@ function periodFromEnergy(e: Float64Array): { pxPerCell: number; offset: number 
   }
   if (bestLag === 0 || best < 0.2) return null;
 
-  // The strongest peak may be a harmonic; prefer a sub-multiple that is itself
-  // a strong peak (the fundamental cell size).
+  // Sub-pixel peak location by parabolic interpolation of the three ACF samples
+  // around the integer lag — a real grid's pitch is rarely a whole number, and
+  // an integer estimate drifts out of alignment across a wide image.
+  const refine = (lag: number): number => {
+    if (lag <= MIN_CELL || lag >= maxCell) return lag;
+    const a = acf[lag - 1]!;
+    const b = acf[lag]!;
+    const c = acf[lag + 1]!;
+    const denom = a - 2 * b + c;
+    if (denom >= 0) return lag; // not a concave peak
+    const delta = (0.5 * (a - c)) / denom;
+    return Math.abs(delta) <= 1 ? lag + delta : lag;
+  };
+
+  // The strongest peak may be a harmonic; prefer a sub-multiple that is itself a
+  // strong peak (the fundamental). Refine the strong peak first, then divide, so
+  // the fundamental keeps sub-pixel accuracy.
+  let pxPerCell = refine(bestLag);
   for (const k of [2, 3]) {
     const sub = Math.round(bestLag / k);
     if (sub >= MIN_CELL && acf[sub]! >= 0.6 * best) {
-      bestLag = sub;
-      best = acf[sub]!;
+      pxPerCell = refine(bestLag) / k;
+      break;
     }
   }
-  const pxPerCell = bestLag;
 
-  // Phase: the comb offset that collects the most gridline energy.
-  let bestPhase = 0;
-  let bestScore = -Infinity;
-  for (let phase = 0; phase < pxPerCell; phase++) {
-    let sum = 0;
-    for (let x = phase; x < n; x += pxPerCell) sum += s[x]!;
-    if (sum > bestScore) {
-      bestScore = sum;
-      bestPhase = phase;
-    }
+  // Sub-pixel phase: circular mean of the positive (gridline) energy at the grid
+  // frequency. Robust and independent of where the first line happens to fall.
+  let sumSin = 0;
+  let sumCos = 0;
+  for (let x = 0; x < n; x++) {
+    const w = s[x]! > 0 ? s[x]! : 0;
+    const angle = (2 * Math.PI * x) / pxPerCell;
+    sumSin += w * Math.sin(angle);
+    sumCos += w * Math.cos(angle);
   }
-  return { pxPerCell, offset: bestPhase };
+  let offset = (Math.atan2(sumSin, sumCos) / (2 * Math.PI)) * pxPerCell;
+  offset = ((offset % pxPerCell) + pxPerCell) % pxPerCell;
+
+  return { pxPerCell, offset };
 }
 
 /** Detect a regular grid, or null if the image has no clear one. */
