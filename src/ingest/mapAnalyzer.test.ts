@@ -118,6 +118,37 @@ describe("analyzeMap", () => {
     expect(walls.length).toBeLessThanOrEqual(7);
   });
 
+  it("flattens a wobbly-but-straight wall to few axis-aligned segments", () => {
+    // A hand-drawn room whose top edge drifts a couple of px across its width —
+    // the floor/background boundary is a shallow staircase. Douglas–Peucker alone
+    // leaves it tilted or stepped; the axis-snap should level it so the room reads
+    // as clean rectilinear walls, not a run of slanted fragments.
+    const w = 100;
+    const h = 100;
+    const data = new Uint8ClampedArray(w * h * 4);
+    for (let i = 0; i < w * h; i++) {
+      const p = i * 4;
+      data[p] = 43;
+      data[p + 1] = 143;
+      data[p + 2] = 214; // blue background
+      data[p + 3] = 255;
+    }
+    // White room x[20,80); its top edge steps down 1px every 15px (net ~4px drift).
+    for (let y = 20; y < 80; y++)
+      for (let x = 20; x < 80; x++) {
+        const topDrift = Math.floor((x - 20) / 15); // 0..3 across the width
+        if (y >= 20 + topDrift) {
+          const p = (y * w + x) * 4;
+          data[p] = data[p + 1] = data[p + 2] = 255;
+        }
+      }
+    const { walls } = analyzeMap({ data, width: w, height: h }, { mmPerPx: 1 });
+    // Every wall is exactly horizontal or vertical (the drift got snapped flat).
+    expect(walls.every((wl) => wl.a.x === wl.b.x || wl.a.y === wl.b.y)).toBe(true);
+    // And it stays compact — a handful of walls, not a per-step staircase.
+    expect(walls.length).toBeLessThanOrEqual(8);
+  });
+
   it("extracts two rooms as eight walls", () => {
     const img = blueprint(120, 80, [
       [10, 10, 30, 30],
