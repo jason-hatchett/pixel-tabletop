@@ -393,9 +393,14 @@ function reconstructMapBoard(
       [imgId]: {
         id: imgId,
         assetRef: ref,
-        pos: { x: layout.imageTopLeftMm.x + layout.widthMm / 2, y: layout.imageTopLeftMm.y + layout.heightMm / 2 },
-        widthMm: layout.widthMm,
-        heightMm: layout.heightMm,
+        // Image is placed at its OWN size, centered on its grid-aligned top-left
+        // (NOT the board size — the board may be larger to contain the shift).
+        pos: {
+          x: layout.imageTopLeftMm.x + layout.imageWidthMm / 2,
+          y: layout.imageTopLeftMm.y + layout.imageHeightMm / 2,
+        },
+        widthMm: layout.imageWidthMm,
+        heightMm: layout.imageHeightMm,
         rotation: 0,
       },
     },

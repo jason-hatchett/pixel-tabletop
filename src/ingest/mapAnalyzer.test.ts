@@ -139,6 +139,8 @@ describe("analyzeMap", () => {
     });
     expect(layout.widthMm).toBe(400); // 200 * 2
     expect(layout.heightMm).toBe(300);
+    expect(layout.imageWidthMm).toBe(400); // no shift → board == image size
+    expect(layout.imageHeightMm).toBe(300);
     // Offset 0 → image sits at board origin; walls unchanged.
     expect(layout.imageTopLeftMm).toEqual({ x: 0, y: 0 });
     expect(layout.walls[0]!.a).toEqual({ x: 10, y: 10 });
@@ -158,8 +160,10 @@ describe("analyzeMap", () => {
     });
     expect(layout.imageTopLeftMm).toEqual({ x: 40, y: 40 });
     expect(layout.walls[0]!.a).toEqual({ x: 40, y: 40 });
-    // Board grows to contain the shifted image (200mm image + 40mm shift).
-    expect(layout.widthMm).toBe(240);
+    // Board grows to contain the shifted image, but the image keeps its own size.
+    expect(layout.widthMm).toBe(240); // 200mm image + 40mm shift
+    expect(layout.imageWidthMm).toBe(200); // image itself, NOT the board
+
   });
 
   it("auto-detects a greyscale linework map and extracts its drawn walls", () => {
