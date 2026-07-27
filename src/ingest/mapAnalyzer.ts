@@ -408,9 +408,12 @@ export function analyzeMap(img: PixelBuffer, opts: AnalyzeOptions): MapAnalysis 
 }
 
 export interface MapBoardLayout {
-  /** Board size = the image's physical size. */
+  /** Board size (contains the grid-aligned image + walls). */
   widthMm: number;
   heightMm: number;
+  /** The image's own physical size (for the placement, NOT the board size). */
+  imageWidthMm: number;
+  imageHeightMm: number;
   /** Where the image's top-left corner sits in board space (grid-aligned). */
   imageTopLeftMm: Vec2;
   /** Analyzer walls translated into board space. */
@@ -451,9 +454,13 @@ export function layoutMapBoard(
     b: { x: w.b.x + topLeft.x, y: w.b.y + topLeft.y },
   }));
   // Board must contain the shifted image: image spans [topLeft, topLeft + size].
+  const imageWidthMm = imgWidth * mmPerPx;
+  const imageHeightMm = imgHeight * mmPerPx;
   return {
-    widthMm: imgWidth * mmPerPx + topLeft.x,
-    heightMm: imgHeight * mmPerPx + topLeft.y,
+    widthMm: imageWidthMm + topLeft.x,
+    heightMm: imageHeightMm + topLeft.y,
+    imageWidthMm,
+    imageHeightMm,
     imageTopLeftMm: topLeft,
     walls,
   };
