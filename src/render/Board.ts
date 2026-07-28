@@ -528,6 +528,7 @@ export class Board {
       cover: opt.cover,
       difficult: opt.difficult,
       surface: opt.surface,
+      heightMm: opt.heightMm,
       pattern: opt.pattern,
       fill: opt.fill,
       border: opt.border,

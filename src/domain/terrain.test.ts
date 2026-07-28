@@ -4,9 +4,14 @@ import {
   findTerrainOption,
   terrainVirtualWalls,
   terrainCoverAt,
+  heightClass,
+  heightColor,
+  HEIGHT_LOW_MM,
+  HEIGHT_TALL_MM,
   type TerrainPiece,
 } from "./terrain.js";
 import { lineOfSightBlocked } from "./walls.js";
+import { inchesToMm } from "./units.js";
 import type { BaseShape } from "./geometry.js";
 
 const piece = (overrides: Partial<TerrainPiece> = {}): TerrainPiece => ({
@@ -19,6 +24,7 @@ const piece = (overrides: Partial<TerrainPiece> = {}): TerrainPiece => ({
   cover: "heavy",
   difficult: true,
   surface: null,
+  heightMm: 0,
   pattern: "hatch",
   fill: 0x8a8f9c,
   border: 0xd8dde3,
@@ -63,6 +69,60 @@ describe("terrain catalogs", () => {
     const opt = getTerrainOptions("warhammer")[0]!;
     expect(findTerrainOption("warhammer", opt.id)).toEqual(opt);
     expect(findTerrainOption("dnd5e", opt.id)).toBeUndefined();
+  });
+
+  it("every option in every system carries a numeric heightMm", () => {
+    for (const systemId of ["warhammer", "dnd5e"]) {
+      for (const o of getTerrainOptions(systemId)) {
+        expect(typeof o.heightMm).toBe("number");
+        expect(o.heightMm).toBeGreaterThanOrEqual(0);
+      }
+    }
+  });
+
+  it("exposes both editions' area-terrain footprints (deduped), tall", () => {
+    const wh = getTerrainOptions("warhammer");
+    for (const [id, wIn, hIn] of [
+      ["area-12x6", 12, 6], // 10th
+      ["area-10x5", 10, 5], // 10th
+      ["area-6x4", 6, 4], // shared
+      ["area-11p5x8", 11.5, 8], // 11th
+      ["area-11p5x7", 11.5, 7], // 11th
+      ["area-10x2p5", 10, 2.5], // 11th
+      ["area-6x2", 6, 2], // 11th
+    ] as const) {
+      const o = wh.find((x) => x.id === id);
+      expect(o, id).toBeDefined();
+      expect(o!.base).toEqual({ kind: "rect", halfWidthMm: inchesToMm(wIn) / 2, halfHeightMm: inchesToMm(hIn) / 2 });
+      expect(heightClass(o!.heightMm)).toBe("tall");
+    }
+  });
+});
+
+describe("terrain height", () => {
+  it("buckets heights into the GW ground/low/tall key", () => {
+    expect(heightClass(0)).toBe("ground");
+    expect(heightClass(-5)).toBe("ground");
+    expect(heightClass(HEIGHT_LOW_MM)).toBe("low");
+    expect(heightClass(inchesToMm(4))).toBe("low"); // "4\" or less" is not tall
+    expect(heightClass(inchesToMm(4) + 0.1)).toBe("tall"); // strictly more than 4"
+    expect(heightClass(HEIGHT_TALL_MM)).toBe("tall");
+  });
+
+  it("maps each height class to a distinct fill/pattern (grey hatch / teal dots / earth)", () => {
+    const tall = heightColor(HEIGHT_TALL_MM);
+    const low = heightColor(HEIGHT_LOW_MM);
+    const ground = heightColor(0);
+    expect(tall.pattern).toBe("hatch");
+    expect(low.pattern).toBe("dots");
+    expect(ground.pattern).toBe("solid");
+    const fills = new Set([tall.fill, low.fill, ground.fill]);
+    expect(fills.size).toBe(3);
+  });
+
+  it("area-terrain footprints are coloured to match their height class", () => {
+    const o = findTerrainOption("warhammer", "area-12x6")!;
+    expect({ fill: o.fill, border: o.border, pattern: o.pattern }).toEqual(heightColor(o.heightMm));
   });
 });
 

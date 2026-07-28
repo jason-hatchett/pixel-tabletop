@@ -59,6 +59,26 @@ describe("envelope serialize/deserialize", () => {
     expect(s.terrain).toEqual({});
     expect(s.widthMm).toBe(makeInitialState().widthMm);
   });
+
+  it("normalize back-fills heightMm on terrain saved before the field existed", () => {
+    // A legacy piece with no heightMm (ADR-0011 additive field).
+    const legacy = {
+      id: "t1",
+      label: "Ruins",
+      pos: { x: 0, y: 0 },
+      base: { kind: "rect", halfWidthMm: 40, halfHeightMm: 60 },
+      facing: 0,
+      losBlocking: "blocks",
+      cover: "heavy",
+      difficult: true,
+      surface: null,
+      pattern: "hatch",
+      fill: 0x8a8f9c,
+      border: 0xd8dde3,
+    };
+    const s = normalize({ terrain: { t1: legacy } } as unknown as Partial<BoardState>);
+    expect(s.terrain.t1!.heightMm).toBe(0);
+  });
 });
 
 describe("LocalBoardStore (name-keyed)", () => {

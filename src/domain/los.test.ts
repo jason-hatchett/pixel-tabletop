@@ -27,6 +27,7 @@ const ruin = (
   cover: "heavy",
   difficult: true,
   surface: null,
+  heightMm: 0,
   pattern: "hatch",
   fill: 0,
   border: 0,

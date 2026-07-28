@@ -11,6 +11,7 @@
 
 import type { BoardState } from "../domain/state.js";
 import { makeInitialState } from "../domain/state.js";
+import type { TerrainPiece } from "../domain/terrain.js";
 
 export const SCHEMA_VERSION = 1;
 
@@ -18,6 +19,16 @@ export interface SavedBoard {
   schemaVersion: number;
   savedAt: string; // ISO
   state: BoardState;
+}
+
+/** Back-fill terrain fields added after a save was written (ADR-0007 additive
+ * seam). `heightMm` (ADR-0011) defaults to 0/ground on pieces that predate it. */
+function normalizeTerrain(terrain: Record<string, TerrainPiece>): Record<string, TerrainPiece> {
+  const out: Record<string, TerrainPiece> = {};
+  for (const [id, piece] of Object.entries(terrain)) {
+    out[id] = { ...piece, heightMm: piece.heightMm ?? 0 };
+  }
+  return out;
 }
 
 /** Fill any missing top-level keys so older/partial saves stay loadable. */
@@ -29,7 +40,7 @@ export function normalize(raw: Partial<BoardState>): BoardState {
     systemId: raw.systemId ?? base.systemId,
     tokens: raw.tokens ?? base.tokens,
     walls: raw.walls ?? base.walls,
-    terrain: raw.terrain ?? base.terrain,
+    terrain: raw.terrain ? normalizeTerrain(raw.terrain) : base.terrain,
     images: raw.images ?? base.images,
   };
 }
