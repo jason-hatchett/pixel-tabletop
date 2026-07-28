@@ -37,6 +37,44 @@ export type LosBlocking = "none" | "blocks";
 export type TerrainCoverLevel = "none" | "light" | "heavy";
 export type TerrainPattern = "hatch" | "dots" | "solid";
 
+/**
+ * Suggested terrain height, following the Games Workshop "Terrain Layouts" key:
+ * a two-bucket scale — "more than 4\"" (tall) vs "2\" or less" (low) — plus
+ * ground level. Stored as real millimetres (ADR-0001); the buckets are a
+ * presentation derivation (`heightClass`), so a future continuous-height slider
+ * or true-height LoS needs no schema change. See ADR-0011.
+ */
+export type HeightClass = "ground" | "low" | "tall";
+
+/** Representative heights for the two GW buckets, in mm. */
+export const HEIGHT_LOW_MM = inchesToMm(2);
+export const HEIGHT_TALL_MM = inchesToMm(5);
+/** GW's key splits "tall" at strictly more than 4". */
+const HEIGHT_TALL_THRESHOLD_MM = inchesToMm(4);
+
+/** Bucket a real height (mm) into the GW ground/low/tall key. */
+export function heightClass(heightMm: number): HeightClass {
+  if (heightMm <= 0) return "ground";
+  return heightMm > HEIGHT_TALL_THRESHOLD_MM ? "tall" : "low";
+}
+
+/**
+ * Height → the GW legend's fill/pattern: grey hatch (tall), teal dots (low),
+ * flat earth (ground). Baked onto a piece at import so height reads at a glance
+ * and the colour travels in BoardState (ADR-0011) — the renderer, which already
+ * draws from a piece's fill/pattern, needs no change.
+ */
+export function heightColor(heightMm: number): { fill: number; border: number; pattern: TerrainPattern } {
+  switch (heightClass(heightMm)) {
+    case "tall":
+      return { fill: 0x8a8f9c, border: 0xd8dde3, pattern: "hatch" };
+    case "low":
+      return { fill: 0x5878a8, border: 0x33445e, pattern: "dots" };
+    case "ground":
+      return { fill: 0x6b5842, border: 0x4a3b2a, pattern: "solid" };
+  }
+}
+
 /** A placed terrain instance — self-contained, like `Token`, for serialization. */
 export interface TerrainPiece {
   id: string;
@@ -49,6 +87,8 @@ export interface TerrainPiece {
   difficult: boolean;
   /** Descriptive ground type (D&D only: "earth" | "stone" | "building"). */
   surface: string | null;
+  /** Real terrain height in mm; 0 = flush/ground. Denoted visually via `heightColor`. */
+  heightMm: number;
   pattern: TerrainPattern;
   fill: number;
   border: number;
@@ -63,10 +103,55 @@ export interface TerrainOption {
   cover: TerrainCoverLevel;
   difficult: boolean;
   surface: string | null;
+  heightMm: number;
   pattern: TerrainPattern;
   fill: number;
   border: number;
 }
+
+/** Which edition's area-terrain size roster to use (they differ). */
+export type AreaTerrainEdition = "10e" | "11e";
+
+export const AREA_TERRAIN_EDITIONS: { id: AreaTerrainEdition; label: string; sizesLabel: string }[] = [
+  { id: "10e", label: "10th edition", sizesLabel: '6×4, 10×5, 12×6' },
+  { id: "11e", label: "11th edition", sizesLabel: '11.5×8, 11.5×7, 10×2.5, 6×4, 6×2' },
+];
+export const DEFAULT_AREA_TERRAIN_EDITION: AreaTerrainEdition = "11e";
+
+interface AreaSize {
+  longIn: number;
+  shortIn: number;
+}
+
+/**
+ * Official Warhammer 40k area-terrain outline sizes (long × short, inches) per
+ * edition. 10th's "Terrain Layouts" pack uses 6×4, 10×5, 12×6; 11th uses
+ * 11.5×8 (right-angle, two make a square), 11.5×7, 10×2.5, 6×4, 6×2.
+ */
+const AREA_TERRAIN_SIZES_IN: Record<AreaTerrainEdition, AreaSize[]> = {
+  "10e": [
+    { longIn: 12, shortIn: 6 },
+    { longIn: 10, shortIn: 5 },
+    { longIn: 6, shortIn: 4 },
+  ],
+  "11e": [
+    { longIn: 11.5, shortIn: 8 },
+    { longIn: 11.5, shortIn: 7 },
+    { longIn: 10, shortIn: 2.5 },
+    { longIn: 6, shortIn: 4 },
+    { longIn: 6, shortIn: 2 },
+  ],
+};
+
+/**
+ * Snapping roster (long × short, mm) per edition — the source of truth for
+ * snapping detected terrain to a real footprint (ADR-0011), so import never
+ * invents an off-catalog size. Keyed by edition; the user picks at import.
+ */
+export const AREA_TERRAIN_FOOTPRINTS_MM: Record<AreaTerrainEdition, { longMm: number; shortMm: number }[]> = {
+  "10e": AREA_TERRAIN_SIZES_IN["10e"].map((s) => ({ longMm: inchesToMm(s.longIn), shortMm: inchesToMm(s.shortIn) })),
+  "11e": AREA_TERRAIN_SIZES_IN["11e"].map((s) => ({ longMm: inchesToMm(s.longIn), shortMm: inchesToMm(s.shortIn) })),
+};
 
 const rectIn = (wIn: number, hIn: number): BaseShape => ({
   kind: "rect",
@@ -83,6 +168,32 @@ const rectFt = (wFt: number, hFt: number): BaseShape => ({
   halfHeightMm: feetToMm(hFt) / 2,
 });
 
+/** Placeable area-terrain outlines for both editions, deduped by size (6×4 is
+ * shared). Tall ruins, height-coloured via `heightColor` (ADR-0011). */
+const areaTerrainOptions: TerrainOption[] = (() => {
+  const seen = new Set<string>();
+  const opts: TerrainOption[] = [];
+  for (const ed of ["10e", "11e"] as const) {
+    for (const s of AREA_TERRAIN_SIZES_IN[ed]) {
+      const key = `${s.longIn}x${s.shortIn}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      opts.push({
+        id: `area-${key.replace(".", "p")}`,
+        label: `Area Terrain ${s.longIn}"×${s.shortIn}"`,
+        base: rectIn(s.longIn, s.shortIn),
+        losBlocking: "blocks",
+        cover: "heavy",
+        difficult: true,
+        surface: null,
+        heightMm: HEIGHT_TALL_MM,
+        ...heightColor(HEIGHT_TALL_MM),
+      });
+    }
+  }
+  return opts;
+})();
+
 /** Games Workshop-flavoured battlefield terrain. */
 export const WARHAMMER_TERRAIN: TerrainOption[] = [
   {
@@ -93,6 +204,7 @@ export const WARHAMMER_TERRAIN: TerrainOption[] = [
     cover: "heavy",
     difficult: true,
     surface: null,
+    heightMm: HEIGHT_TALL_MM,
     pattern: "hatch",
     fill: 0x8a8f9c,
     border: 0xd8dde3,
@@ -105,6 +217,7 @@ export const WARHAMMER_TERRAIN: TerrainOption[] = [
     cover: "heavy",
     difficult: true,
     surface: null,
+    heightMm: HEIGHT_TALL_MM,
     pattern: "hatch",
     fill: 0x8a8f9c,
     border: 0xd8dde3,
@@ -117,6 +230,7 @@ export const WARHAMMER_TERRAIN: TerrainOption[] = [
     cover: "light",
     difficult: true,
     surface: null,
+    heightMm: 0,
     pattern: "solid",
     fill: 0x6b5842,
     border: 0x4a3b2a,
@@ -129,6 +243,7 @@ export const WARHAMMER_TERRAIN: TerrainOption[] = [
     cover: "light",
     difficult: true,
     surface: null,
+    heightMm: 0,
     pattern: "solid",
     fill: 0x6b5842,
     border: 0x4a3b2a,
@@ -141,6 +256,7 @@ export const WARHAMMER_TERRAIN: TerrainOption[] = [
     cover: "light",
     difficult: true,
     surface: null,
+    heightMm: HEIGHT_LOW_MM,
     pattern: "dots",
     fill: 0x5878a8,
     border: 0x33445e,
@@ -153,6 +269,7 @@ export const WARHAMMER_TERRAIN: TerrainOption[] = [
     cover: "light",
     difficult: true,
     surface: null,
+    heightMm: HEIGHT_LOW_MM,
     pattern: "dots",
     fill: 0x5878a8,
     border: 0x33445e,
@@ -165,6 +282,7 @@ export const WARHAMMER_TERRAIN: TerrainOption[] = [
     cover: "heavy",
     difficult: true,
     surface: null,
+    heightMm: HEIGHT_TALL_MM,
     pattern: "dots",
     fill: 0x3f6b48,
     border: 0x25402c,
@@ -177,10 +295,16 @@ export const WARHAMMER_TERRAIN: TerrainOption[] = [
     cover: "heavy",
     difficult: true,
     surface: null,
+    heightMm: HEIGHT_TALL_MM,
     pattern: "dots",
     fill: 0x3f6b48,
     border: 0x25402c,
   },
+  // Official area-terrain outlines for both editions (deduped) — see
+  // `areaTerrainOptions`. Tall ruins by default; fill/pattern come from
+  // `heightColor` so the grey (tall) / teal (low) height key reads on the board
+  // (ADR-0011). Height class can be re-coloured after placement.
+  ...areaTerrainOptions,
 ];
 
 /** D&D 5E terrain: LoS-blocking features plus descriptive ground surfaces. */
@@ -193,6 +317,7 @@ export const DND_TERRAIN: TerrainOption[] = [
     cover: "heavy",
     difficult: false,
     surface: "building",
+    heightMm: HEIGHT_TALL_MM,
     pattern: "hatch",
     fill: 0x9c8a6f,
     border: 0xd8c9a3,
@@ -205,6 +330,7 @@ export const DND_TERRAIN: TerrainOption[] = [
     cover: "heavy",
     difficult: false,
     surface: "building",
+    heightMm: HEIGHT_TALL_MM,
     pattern: "hatch",
     fill: 0x9c8a6f,
     border: 0xd8c9a3,
@@ -217,6 +343,7 @@ export const DND_TERRAIN: TerrainOption[] = [
     cover: "heavy",
     difficult: true,
     surface: "earth",
+    heightMm: HEIGHT_TALL_MM,
     pattern: "dots",
     fill: 0x3f6b48,
     border: 0x25402c,
@@ -229,6 +356,7 @@ export const DND_TERRAIN: TerrainOption[] = [
     cover: "heavy",
     difficult: true,
     surface: "earth",
+    heightMm: HEIGHT_TALL_MM,
     pattern: "dots",
     fill: 0x3f6b48,
     border: 0x25402c,
@@ -241,6 +369,7 @@ export const DND_TERRAIN: TerrainOption[] = [
     cover: "light",
     difficult: true,
     surface: "stone",
+    heightMm: HEIGHT_LOW_MM,
     pattern: "dots",
     fill: 0x5878a8,
     border: 0x33445e,
@@ -253,6 +382,7 @@ export const DND_TERRAIN: TerrainOption[] = [
     cover: "light",
     difficult: true,
     surface: "stone",
+    heightMm: HEIGHT_LOW_MM,
     pattern: "dots",
     fill: 0x5878a8,
     border: 0x33445e,
@@ -265,6 +395,7 @@ export const DND_TERRAIN: TerrainOption[] = [
     cover: "none",
     difficult: false,
     surface: "earth",
+    heightMm: 0,
     pattern: "solid",
     fill: 0x6b5842,
     border: 0x4a3b2a,
@@ -277,6 +408,7 @@ export const DND_TERRAIN: TerrainOption[] = [
     cover: "none",
     difficult: false,
     surface: "stone",
+    heightMm: 0,
     pattern: "solid",
     fill: 0x7c8290,
     border: 0x555b66,
@@ -289,6 +421,7 @@ export const DND_TERRAIN: TerrainOption[] = [
     cover: "none",
     difficult: false,
     surface: "building",
+    heightMm: 0,
     pattern: "solid",
     fill: 0x8a7458,
     border: 0x6b5a42,

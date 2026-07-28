@@ -13,11 +13,15 @@ import { decodeImageData } from "./ingest/decode.js";
 import { mmExtentFromSpan, alignEdgeToGrid } from "./ingest/calibrate.js";
 import { detectGrid } from "./ingest/gridDetect.js";
 import { analyzeMap, layoutMapBoard, type MapStyle } from "./ingest/mapAnalyzer.js";
+import { analyzeTerrainLayout, detectedTerrainToPiece } from "./ingest/terrainLayoutAnalyzer.js";
 import { chooseModal } from "./ui/modal.js";
 import { confirmGridModal, type GridConfirmResult } from "./ui/gridConfirm.js";
 import { confirmWallsModal, type WallsConfirmResult } from "./ui/wallsConfirm.js";
+import { confirmTerrainLayoutModal, type TerrainConfirmResult, type FootprintPx } from "./ui/terrainLayoutConfirm.js";
 import type { BoardState } from "./domain/state.js";
 import type { Wall } from "./domain/walls.js";
+import type { TerrainPiece, AreaTerrainEdition } from "./domain/terrain.js";
+import { AREA_TERRAIN_EDITIONS } from "./domain/terrain.js";
 import type { PixelBuffer } from "./ingest/decode.js";
 
 // Standard Warhammer 40k battlefield sizes (real inches). A 40k map is scaled to
@@ -112,6 +116,7 @@ const objitemLabel = $<HTMLLabelElement>("objitem-label");
 const placeControls = $<HTMLSpanElement>("place-controls");
 const moveHint = $<HTMLSpanElement>("move-hint");
 const wallHint = $<HTMLSpanElement>("wall-hint");
+const terrainLegend = $<HTMLSpanElement>("terrain-height-legend");
 const templateSelect = $<HTMLSelectElement>("template-select");
 const gridToggle = $<HTMLButtonElement>("grid-toggle");
 const snapToggle = $<HTMLButtonElement>("snap-toggle");
@@ -161,6 +166,8 @@ function apply(): void {
   moveHint.style.display = placeMode ? "none" : "";
   objitemLabel.style.display = type === "wall" ? "none" : "";
   wallHint.style.display = type === "wall" ? "" : "none";
+  // Height→colour key is only meaningful while placing terrain.
+  terrainLegend.style.display = placeMode && type === "terrain" ? "" : "none";
 
   // Toggle labels + active highlight.
   gridToggle.textContent = `Grid: ${gridOn ? "on" : "off"}`;
@@ -410,6 +417,59 @@ function reconstructMapBoard(
 }
 
 /**
+ * Warhammer terrain-layout import (ADR-0011) — a SEPARATE path from D&D map
+ * ingestion: no grid detection, no wall CV. Analyze the layout image, segment the
+ * printed area terrain by colour (grey = tall ruins, teal = low), show the
+ * detections in a review gate, then build a fresh board sized to the chosen
+ * battlefield holding the accepted terrain. The image is NOT kept — the terrain
+ * pieces replace it. Returns true if terrain was placed.
+ */
+async function reconstructTerrainLayout(file: File, widthMm: number, heightMm: number, edition: AreaTerrainEdition): Promise<boolean> {
+  const img = await decodeImageData(file);
+  const analysisResult = analyzeTerrainLayout(img, { boardWidthMm: widthMm, edition });
+  if (analysisResult.pieces.length === 0) {
+    alert("No terrain detected in this image. Expecting an official Warhammer terrain-layout diagram (grey and teal area-terrain shapes on a battlemat).");
+    return false;
+  }
+
+  // Detected pieces are board-relative mm; project back to image px for the preview.
+  const { mmPerPx, boardPx } = analysisResult;
+  const footprints: FootprintPx[] = analysisResult.pieces.map((p) => ({
+    cx: p.pos.x / mmPerPx + boardPx.x,
+    cy: p.pos.y / mmPerPx + boardPx.y,
+    long: (p.base.kind === "rect" ? p.base.halfWidthMm * 2 : 0) / mmPerPx,
+    short: (p.base.kind === "rect" ? p.base.halfHeightMm * 2 : 0) / mmPerPx,
+    angle: p.facing,
+    cls: p.heightMm > 60 ? "tall" : "low",
+    flagged: !p.rect,
+  }));
+
+  const url = URL.createObjectURL(file);
+  let result: TerrainConfirmResult | null;
+  try {
+    result = await confirmTerrainLayoutModal({ imageUrl: url, imgWidth: img.width, imgHeight: img.height, footprints });
+  } finally {
+    URL.revokeObjectURL(url);
+  }
+  if (!result) return false;
+
+  const accepted = analysisResult.pieces.filter((p) => p.rect || result.includeFlagged);
+  const terrain: Record<string, TerrainPiece> = {};
+  accepted.forEach((d, i) => {
+    const piece = detectedTerrainToPiece(d, i);
+    terrain[piece.id] = piece;
+  });
+  const board: BoardState = { widthMm, heightMm, systemId: "warhammer", tokens: {}, walls: {}, terrain, images: {} };
+  sync.dispatch({ type: "loadState", state: board });
+  // Land the user in Place → Terrain to tweak / add more area terrain.
+  modeSelect.value = "place";
+  objtypeSelect.value = "terrain";
+  analysis = "none";
+  afterLoad();
+  return true;
+}
+
+/**
  * D&D placement: detect the image grid, infer scale (1 image square = 1 board
  * cell), and align the image so its gridlines fall on the board grid. On accept,
  * offer wall reconstruction (staged preview) or a plain aligned background.
@@ -492,7 +552,7 @@ imageBtn.addEventListener("click", async () => {
       "Import map image",
       [
         { label: "Dungeons & Dragons 5E", value: "dnd", sub: "Match the image grid to the board grid" },
-        { label: "Warhammer 40k / AoS", value: "40k", sub: "Scale to a standard battlefield size" },
+        { label: "Warhammer 40k / AoS", value: "40k", sub: "Terrain layout: pick battlefield size, then place area terrain" },
       ],
       { subtitle: "What is this map for?" },
     );
@@ -502,13 +562,19 @@ imageBtn.addEventListener("click", async () => {
     if (!file) return;
 
     if (game === "40k") {
+      const edition = await chooseModal<AreaTerrainEdition>(
+        "Terrain edition",
+        AREA_TERRAIN_EDITIONS.map((e) => ({ label: e.label, value: e.id, sub: e.sizesLabel })),
+        { subtitle: "Which terrain set is this layout? Pieces snap to its sizes." },
+      );
+      if (!edition) return;
       const size = await chooseModal(
         "Battlefield size",
         BATTLEFIELD_SIZES.map((s) => ({ label: s.label, value: s, sub: `${s.w}" × ${s.h}"` })),
-        { subtitle: "The image is scaled to this physical size." },
+        { subtitle: "The layout fills a board of this physical size." },
       );
       if (!size) return;
-      placeImage(file, inchesToMm(size.w), inchesToMm(size.h));
+      await reconstructTerrainLayout(file, inchesToMm(size.w), inchesToMm(size.h), edition);
     } else {
       await placeDndImage(file);
     }
