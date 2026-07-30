@@ -416,6 +416,21 @@ game-design.md §9:
   draw new footprints over the image. Fold in the related want for terrain to snap
   **edge-to-edge / corner-to-corner** with neighbours. See
   [architecture/adr-0011-warhammer-terrain-layout-import.md](architecture/adr-0011-warhammer-terrain-layout-import.md).
+- **WH terrain-layout import — outline-driven catalog fit (durable segmentation).**
+  The current pipeline segments the colour *fill* (morphology → PCA box → snap to
+  the nearest catalog size). This is inherently ambiguous for pieces laid
+  edge-to-edge: two 6×4 tall pieces occupy the *same pixels* as one 12×6, so no
+  fill-only method can separate them — only the dark seam between them can. The
+  merging bug this caused is fixed short-term by an **outline-aware close** (fill
+  can't bridge a piece's dark border) plus a **per-blob hole fill** for internal
+  walls (`terrainLayoutAnalyzer.ts`). The durable fix (Option B, deferred): drive
+  segmentation from the **dark outline loops**, fitting each loop to the best
+  catalog `{size, position, rotation}` — a tiny search over 5 sizes/edition ×
+  orientation — and validating by fill. Outlines separate touching pieces natively
+  and internal ruins walls sit *inside* a loop, so they never spawn a piece. Folds
+  into the ADR-0011 footprint-editor work. Remaining edge case in the short-term
+  fix: a ruins wall that fully bisects a grey footprint could split it into two
+  blobs (rare; the outline-fit approach removes it entirely).
 - **WH terrain-layout import — capture ruins walls as LoS blockers.** The internal
   "recommended ruins placement" L-mark inside each grey footprint is the true
   line-of-sight blocker. Import now *contains* it (folds it into the solid

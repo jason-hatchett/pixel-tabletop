@@ -15,8 +15,10 @@
  *      excluding the mottled concrete margin; sets scale + origin.
  *   2. Colour masks — grey hatch = tall ruins, blue dots = low terrain. The GW
  *      key IS colour-coded by height, so segmentation and height fall out together.
- *   3. Morphology — close to merge hatch/dots into solid blobs, open to drop
- *      grid lines, red dimension arrows, and eye badges.
+ *   3. Morphology — an outline-aware close merges hatch/dots into solid blobs
+ *      without bridging a footprint's dark border into its neighbour, then open
+ *      drops grid lines, red dimension arrows, and eye badges. Grey footprints
+ *      then get a per-blob enclosed-hole fill to solidify their internal walls.
  *   4. Connected components → PCA oriented box per blob (centre, size, angle).
  *   5. Fill ratio (pixels ÷ box area) rejects merged / L-shaped blobs as
  *      not-a-single-rectangle; they are flagged, not silently placed.
@@ -100,10 +102,11 @@ export interface AnalyzeLayoutOptions {
    */
   mergeSplits?: boolean;
   /**
-   * Fold the internal "recommended ruins placement" wall marks into the grey
-   * footprint so a ruins outline reads as a solid rectangle rather than one
-   * notched by its own walls (default on). The walls stay contained inside the
-   * footprint; capturing them as LoS blockers is future work (roadmap).
+   * Fill each grey footprint's internal "recommended ruins placement" wall notch
+   * so it reads as a solid rectangle rather than one notched by its own walls
+   * (default on). Done as a per-blob enclosed-hole fill *after* segmentation, so
+   * it can never merge two adjacent footprints (unlike the old board-wide close).
+   * The walls stay contained; capturing them as LoS blockers is future work.
    */
   containWalls?: boolean;
 }
@@ -283,10 +286,21 @@ function classify(img: PixelBuffer, pred: (r: number, g: number, b: number) => b
 
 // --- morphology (3×3, radius = iterations) ---
 
-function dilate(mask: Mask, w: number, h: number): Mask {
+/**
+ * 3×3 dilation. When `barrier` is given it is an outline mask the growth may not
+ * enter: a barrier pixel never turns on, so fill cannot flow *across* an outline
+ * into a neighbouring footprint. This is what keeps two edge-to-edge pieces (each
+ * ringed by its own dark border) from fusing into one blob during `close`.
+ */
+function dilate(mask: Mask, w: number, h: number, barrier?: Mask): Mask {
   const out = new Uint8Array(w * h);
   for (let y = 0; y < h; y++) {
     for (let x = 0; x < w; x++) {
+      const idx = y * w + x;
+      if (barrier && barrier[idx] === 1) {
+        out[idx] = 0; // an outline pixel blocks growth; fill can't cross it
+        continue;
+      }
       let v = 0;
       for (let dy = -1; dy <= 1 && v === 0; dy++) {
         for (let dx = -1; dx <= 1; dx++) {
@@ -298,7 +312,7 @@ function dilate(mask: Mask, w: number, h: number): Mask {
           }
         }
       }
-      out[y * w + x] = v;
+      out[idx] = v;
     }
   }
   return out;
@@ -329,9 +343,15 @@ function erode(mask: Mask, w: number, h: number): Mask {
   return out;
 }
 
-function close(mask: Mask, w: number, h: number, radius: number): Mask {
+/**
+ * Morphological close (dilate then erode). With `barrier`, the dilation is
+ * outline-aware (see `dilate`): the close still bridges same-colour texture gaps
+ * (hatch strokes, dot spacing) — those gaps are battlemat, not outline — but is
+ * forbidden from bridging across a footprint's dark border into its neighbour.
+ */
+function close(mask: Mask, w: number, h: number, radius: number, barrier?: Mask): Mask {
   let m = mask;
-  for (let i = 0; i < radius; i++) m = dilate(m, w, h);
+  for (let i = 0; i < radius; i++) m = dilate(m, w, h, barrier);
   for (let i = 0; i < radius; i++) m = erode(m, w, h);
   return m;
 }
@@ -381,6 +401,62 @@ function components(mask: Mask, w: number, h: number, minPixels: number): Blob[]
     if (pixels.length >= minPixels) blobs.push({ pixels });
   }
   return blobs;
+}
+
+/**
+ * Fill a blob's fully-enclosed background holes — the notch a footprint's own
+ * internal "recommended ruins placement" wall leaves in the grey fill — so it
+ * reads as a solid rectangle (good fill ratio, unbiased centroid). Operates only
+ * within the blob's own bounding box against its own pixels, so it can never
+ * merge two blobs (that is the job the old board-wide wall `close` did too
+ * eagerly). A hole is background reachable from *outside* the box only through
+ * the blob — i.e. not connected to the box border by a background path.
+ */
+function fillBlobHoles(blob: Blob, w: number): Blob {
+  let x0 = Infinity;
+  let y0 = Infinity;
+  let x1 = -Infinity;
+  let y1 = -Infinity;
+  for (const i of blob.pixels) {
+    const x = i % w;
+    const y = (i / w) | 0;
+    if (x < x0) x0 = x;
+    if (y < y0) y0 = y;
+    if (x > x1) x1 = x;
+    if (y > y1) y1 = y;
+  }
+  const gw = x1 - x0 + 3; // pad by 1 on every side so the exterior wraps around
+  const gh = y1 - y0 + 3;
+  const occ = new Uint8Array(gw * gh);
+  for (const i of blob.pixels) occ[((i / w | 0) - y0 + 1) * gw + ((i % w) - x0 + 1)] = 1;
+  // Flood background inward from the padded border (4-connectivity).
+  const ext = new Uint8Array(gw * gh);
+  const stack: number[] = [];
+  for (let x = 0; x < gw; x++) {
+    stack.push(x, (gh - 1) * gw + x);
+  }
+  for (let y = 0; y < gh; y++) {
+    stack.push(y * gw, y * gw + gw - 1);
+  }
+  while (stack.length) {
+    const p = stack.pop()!;
+    if (ext[p] === 1 || occ[p] === 1) continue;
+    ext[p] = 1;
+    const x = p % gw;
+    const y = (p / gw) | 0;
+    if (x > 0) stack.push(p - 1);
+    if (x < gw - 1) stack.push(p + 1);
+    if (y > 0) stack.push(p - gw);
+    if (y < gh - 1) stack.push(p + gw);
+  }
+  const pixels = blob.pixels.slice();
+  for (let y = 1; y < gh - 1; y++) {
+    for (let x = 1; x < gw - 1; x++) {
+      const p = y * gw + x;
+      if (occ[p] === 0 && ext[p] === 0) pixels.push((y - 1 + y0) * w + (x - 1 + x0)); // enclosed hole
+    }
+  }
+  return { pixels };
 }
 
 // --- oriented box via principal component analysis ---
@@ -703,18 +779,6 @@ function mergeSplitFootprints(
 }
 
 /**
- * Fold the internal ruins-wall notch into the grey footprint so a ruins outline
- * reads as a solid rectangle, not one notched by its own "recommended ruins
- * placement" L-wall (which otherwise drags the fill ratio down and biases the
- * centroid). A morphological close of `closeR` px bridges the wall groove; it is
- * leak-free (grey mask only) — pick `closeR` wide enough to fill the wall but
- * below the wider battlemat gaps between separate footprints, so they don't merge.
- */
-function solidifyGreyFootprints(grey: Mask, w: number, h: number, closeR: number): Mask {
-  return close(grey, w, h, closeR);
-}
-
-/**
  * Analyze a Warhammer terrain-layout image into board-relative `DetectedTerrain`.
  * `boardWidthMm` (from the chosen battlefield preset) sets the pixel→mm scale.
  */
@@ -738,21 +802,24 @@ export function analyzeTerrainLayout(img: PixelBuffer, opts: AnalyzeLayoutOption
   const snapSize = opts.snapToCatalogSizes ?? true;
   const roster = snapSize ? AREA_TERRAIN_FOOTPRINTS_MM[opts.edition ?? DEFAULT_AREA_TERRAIN_EDITION] : null;
 
+  // Dark piece outlines are barriers the close may not bridge, so fill can't flow
+  // across a footprint's border into an edge-to-edge neighbour and fuse them
+  // (restricted to the board so the frame outside it is irrelevant).
+  const outlineBarrier = restrictToBoard(dark, w, board);
   const prep = (raw: Mask): Blob[] => {
     let m = restrictToBoard(raw, w, board);
-    m = close(m, w, h, closeRadius);
+    m = close(m, w, h, closeRadius, outlineBarrier);
     m = open(m, w, h, openRadius);
     return components(m, w, h, minPixels);
   };
 
   const origin = { x: board.x, y: board.y };
-  // Contain the internal ruins walls so a footprint reads as a solid rectangle:
-  // add the wall marks that touch the grey fill, then close the notch they leave.
-  // Restricted to grey ∪ (wall-touching-grey) so it can't reach across the dark
-  // outline into the battlemat and merge separate footprints.
-  const wallClose = Math.max(closeRadius, Math.round(pxPerMm * 8));
-  const greyMask = (opts.containWalls ?? true) ? solidifyGreyFootprints(greyRaw, w, h, wallClose) : greyRaw;
-  const greyBlobs = prep(greyMask);
+  // Grey footprints: segment (outline-aware, so neighbours stay separate), then
+  // per-blob fill the internal ruins-wall notch so each reads as a solid
+  // rectangle. Filling per-blob — not with a board-wide close — is what stops two
+  // adjacent tall pieces being merged into one oversized footprint (ADR-0011).
+  let greyBlobs = prep(greyRaw);
+  if (opts.containWalls ?? true) greyBlobs = greyBlobs.map((b) => fillBlobHoles(b, w));
   const blueBlobs = prep(blueRaw);
 
   // Split footprints first (needs the catalog): a grey + blue pair that together

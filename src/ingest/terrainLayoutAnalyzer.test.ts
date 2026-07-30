@@ -26,6 +26,7 @@ const poly = (p: DetectedTerrain): { x: number; y: number }[] => basePolygon(p.p
 const BATTLEMAT: [number, number, number] = [210, 210, 210];
 const GREY: [number, number, number] = [105, 107, 110]; // tall ruins
 const BLUE: [number, number, number] = [0, 93, 132]; // low terrain
+const DARK: [number, number, number] = [25, 25, 27]; // piece outline ink
 
 function canvas(w: number, h: number, bg: [number, number, number]): PixelBuffer {
   const data = new Uint8ClampedArray(w * h * 4);
@@ -52,6 +53,12 @@ function fillRect(img: PixelBuffer, x0: number, y0: number, x1: number, y1: numb
 
 const halfW = (p: DetectedTerrain): number => (p.base.kind === "rect" ? p.base.halfWidthMm : 0);
 const halfH = (p: DetectedTerrain): number => (p.base.kind === "rect" ? p.base.halfHeightMm : 0);
+
+/** A filled rect ringed by a dark outline, as real GW layout pieces are drawn. */
+function outlinedRect(img: PixelBuffer, x0: number, y0: number, x1: number, y1: number, ol: number, c: [number, number, number]): void {
+  fillRect(img, x0, y0, x1, y1, DARK);
+  fillRect(img, x0 + ol, y0 + ol, x1 - ol, y1 - ol, c);
+}
 
 describe("analyzeTerrainLayout", () => {
   it("detects a tall grey and a low blue footprint and snaps each to a catalog size", () => {
@@ -100,6 +107,60 @@ describe("analyzeTerrainLayout", () => {
     // The halves tile the footprint: centres one half-length (5in) apart.
     const gap = Math.hypot(tall.pos.x - low.pos.x, tall.pos.y - low.pos.y);
     expect(gap).toBeCloseTo(inchesToMm(5), 0);
+  });
+
+  it("keeps two same-height footprints laid edge-to-edge as separate pieces (not one merged blob)", () => {
+    // Regression: an outline-unaware close fused two adjacent 6×4 tall pieces
+    // into a single 12×6 (a valid catalog size, so it wasn't even flagged).
+    // pxPerMm = 3 (board 400mm across 1200px). Two 6×4in grey pieces, each
+    // dark-outlined, sharing an edge.
+    const img = canvas(1400, 900, BATTLEMAT);
+    const pw = Math.round(inchesToMm(6) * 3);
+    const ph = Math.round(inchesToMm(4) * 3);
+    outlinedRect(img, 100, 300, 100 + pw, 300 + ph, 4, GREY);
+    outlinedRect(img, 100 + pw, 300, 100 + 2 * pw, 300 + ph, 4, GREY);
+
+    const res = analyzeTerrainLayout(img, { boardWidthMm: 400, edition: "10e" });
+    const clean = res.pieces.filter((p) => p.rect);
+    expect(clean.length).toBe(2);
+    for (const p of clean) {
+      expect(halfW(p) * 2).toBeCloseTo(inchesToMm(6), 0);
+      expect(halfH(p) * 2).toBeCloseTo(inchesToMm(4), 0);
+    }
+    // Edge-to-edge: the two centres are one long-side (6in) apart.
+    const gap = Math.hypot(clean[0]!.pos.x - clean[1]!.pos.x, clean[0]!.pos.y - clean[1]!.pos.y);
+    expect(gap).toBeCloseTo(inchesToMm(6), -0.7);
+  });
+
+  it("keeps two same-height footprints with a thin battlemat seam separate", () => {
+    const img = canvas(1400, 900, BATTLEMAT);
+    const pw = Math.round(inchesToMm(6) * 3);
+    const ph = Math.round(inchesToMm(4) * 3);
+    const seam = Math.round(10 * 3); // 10mm of battlemat between them
+    outlinedRect(img, 100, 300, 100 + pw, 300 + ph, 4, GREY);
+    outlinedRect(img, 100 + pw + seam, 300, 100 + 2 * pw + seam, 300 + ph, 4, GREY);
+
+    const res = analyzeTerrainLayout(img, { boardWidthMm: 400, edition: "10e" });
+    expect(res.pieces.filter((p) => p.rect).length).toBe(2);
+  });
+
+  it("still solidifies a single footprint's internal ruins wall into one clean rect", () => {
+    // Containment must survive the switch from a board-wide close to a per-blob
+    // hole fill: a 12×6 grey with an enclosed internal L-wall reads as ONE 12×6.
+    const img = canvas(1400, 900, BATTLEMAT);
+    const lw = Math.round(inchesToMm(12) * 3);
+    const lh = Math.round(inchesToMm(6) * 3);
+    outlinedRect(img, 100, 300, 100 + lw, 300 + lh, 4, GREY);
+    const t = Math.round(2 * 3);
+    // an L fully surrounded by grey (does not touch the outer outline)
+    fillRect(img, 100 + Math.round(lw * 0.4), 300 + Math.round(lh * 0.2), 100 + Math.round(lw * 0.4) + t, 300 + Math.round(lh * 0.8), DARK);
+    fillRect(img, 100 + Math.round(lw * 0.4), 300 + Math.round(lh * 0.8), 100 + Math.round(lw * 0.7), 300 + Math.round(lh * 0.8) + t, DARK);
+
+    const res = analyzeTerrainLayout(img, { boardWidthMm: 400, edition: "10e" });
+    const clean = res.pieces.filter((p) => p.rect);
+    expect(clean.length).toBe(1);
+    expect(halfW(clean[0]!) * 2).toBeCloseTo(inchesToMm(12), 0);
+    expect(halfH(clean[0]!) * 2).toBeCloseTo(inchesToMm(6), 0);
   });
 
   it("drops sub-minimum blobs (map icons) rather than snapping them up to terrain", () => {
