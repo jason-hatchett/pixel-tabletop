@@ -109,6 +109,22 @@ export interface AnalyzeLayoutOptions {
    * The walls stay contained; capturing them as LoS blockers is future work.
    */
   containWalls?: boolean;
+  /**
+   * Drop detected footprints whose boundary is not backed by a dark piece outline
+   * (default off). Real area terrain is drawn with a thin black edge; a blob with
+   * little outline around it is a fill-classification phantom — most often
+   * deployment-zone tint (green/red) reading as grey terrain.
+   *
+   * CAVEAT: reliable only on layouts WITHOUT an overlaid grid. On gridded images
+   * the grid provides dark ink almost everywhere, so grid-surrounded phantoms pass
+   * while real pieces on plain mat (faint edges) can be dropped — it can invert.
+   * Left off by default and NOT enabled by the app until grid removal lands; kept
+   * for clean official-pack images. See roadmap "grid removal".
+   */
+  dropUnoutlined?: boolean;
+  /** Min fraction of a footprint's boundary that must sit next to dark outline ink
+   * to survive `dropUnoutlined` (default 0.35). */
+  outlineBackedMin?: number;
 }
 
 const MM_PER_INCH = 25.4;
@@ -276,6 +292,16 @@ function isDark(r: number, g: number, b: number): boolean {
   const bright = (r + g + b) / 3;
   const sat = Math.max(r, g, b) - Math.min(r, g, b);
   return bright < 75 && sat < 40;
+}
+/**
+ * Outline ink — looser than `isDark`: piece edges are often dark *grey* (~80–95),
+ * not black. Used only for the outline-presence phantom test, which needs to see
+ * the thin piece borders that `isDark` misses.
+ */
+function isInk(r: number, g: number, b: number): boolean {
+  const bright = (r + g + b) / 3;
+  const sat = Math.max(r, g, b) - Math.min(r, g, b);
+  return bright < 105 && sat < 55;
 }
 
 function classify(img: PixelBuffer, pred: (r: number, g: number, b: number) => boolean): Mask {
@@ -729,6 +755,42 @@ function emitSplit(
 }
 
 /**
+ * Fraction of a blob's boundary pixels that have dark outline ink within `ring`
+ * px. A real area-terrain footprint is ringed by a thin black edge (→ high
+ * fraction); a fill-classification phantom (e.g. deployment-zone tint read as
+ * grey) sits on bare mat (→ low fraction). Used to drop phantoms (ADR-0011).
+ */
+function outlineBackedFraction(blob: Blob, w: number, h: number, dark: Mask, ring: number): number {
+  const inBlob = new Set(blob.pixels);
+  let boundary = 0;
+  let backed = 0;
+  for (const i of blob.pixels) {
+    const x = i % w;
+    const y = (i / w) | 0;
+    const isBoundary =
+      x === 0 || y === 0 || x === w - 1 || y === h - 1 ||
+      !inBlob.has(i - 1) || !inBlob.has(i + 1) || !inBlob.has(i - w) || !inBlob.has(i + w);
+    if (!isBoundary) continue;
+    boundary++;
+    let found = false;
+    for (let dy = -ring; dy <= ring && !found; dy++) {
+      for (let dx = -ring; dx <= ring; dx++) {
+        const nx = x + dx;
+        const ny = y + dy;
+        if (nx < 0 || ny < 0 || nx >= w || ny >= h) continue;
+        const k = ny * w + nx;
+        if (dark[k] === 1) {
+          found = true;
+          break;
+        }
+      }
+    }
+    if (found) backed++;
+  }
+  return boundary === 0 ? 0 : backed / boundary;
+}
+
+/**
  * Analyze a Warhammer terrain-layout image into board-relative `DetectedTerrain`.
  * `boardWidthMm` (from the chosen battlefield preset) sets the pixel→mm scale.
  */
@@ -773,6 +835,16 @@ export function analyzeTerrainLayout(img: PixelBuffer, opts: AnalyzeLayoutOption
   const terrainRaw = new Uint8Array(w * h);
   for (let i = 0; i < w * h; i++) terrainRaw[i] = greyRaw[i] || blueRaw[i] ? 1 : 0;
   let blobs = prep(terrainRaw);
+  // Drop phantoms: blobs not ringed by a dark piece outline (mostly deployment-
+  // zone tint misread as grey terrain). Done BEFORE wall hole-fill so the test
+  // sees the true fill boundary, not a filled-in interior.
+  if (opts.dropUnoutlined ?? false) {
+    const inkBoard = restrictToBoard(classify(img, isInk), w, board);
+    // Reach past the close/open boundary shift plus the outline's own thickness.
+    const ring = closeRadius + Math.max(2, Math.round(pxPerMm * 2));
+    const minFrac = opts.outlineBackedMin ?? 0.35;
+    blobs = blobs.filter((b) => outlineBackedFraction(b, w, h, inkBoard, ring) >= minFrac);
+  }
   if (opts.containWalls ?? true) blobs = blobs.map((b) => fillBlobHoles(b, w));
 
   const splittable = roster !== null && (opts.mergeSplits ?? true);

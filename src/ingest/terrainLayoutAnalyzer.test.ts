@@ -163,6 +163,21 @@ describe("analyzeTerrainLayout", () => {
     expect(halfH(clean[0]!) * 2).toBeCloseTo(inchesToMm(6), 0);
   });
 
+  it("dropUnoutlined removes a fill blob that has no surrounding outline (clean case)", () => {
+    // A real piece (dark-edged) and a phantom (bare grey fill, no outline) — as a
+    // deployment-zone tint region would read. With dropUnoutlined the phantom goes.
+    const img = canvas(900, 500, BATTLEMAT);
+    outlinedRect(img, 80, 120, 80 + 152, 120 + 102, 4, GREY); // real: thin dark edge
+    fillRect(img, 520, 120, 520 + 152, 120 + 102, GREY); // phantom: no edge
+
+    const without = analyzeTerrainLayout(img, { boardWidthMm: 900, edition: "10e" });
+    expect(without.pieces.length).toBe(2); // default keeps both
+
+    const withDrop = analyzeTerrainLayout(img, { boardWidthMm: 900, edition: "10e", dropUnoutlined: true });
+    expect(withDrop.pieces.length).toBe(1); // phantom (no outline) dropped
+    expect(withDrop.pieces[0]!.pos.x).toBeLessThan(withDrop.mmPerPx * 300); // the outlined (left) one survives
+  });
+
   it("drops sub-minimum blobs (map icons) rather than snapping them up to terrain", () => {
     const img = canvas(400, 300, BATTLEMAT);
     fillRect(img, 180, 130, 220, 170, BLUE); // 40×40px ≈ 2.5 in² — an eye-badge-sized icon

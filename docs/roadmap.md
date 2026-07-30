@@ -431,6 +431,23 @@ game-design.md §9:
   into the ADR-0011 footprint-editor work. Remaining edge case in the short-term
   fix: a ruins wall that fully bisects a grey footprint could split it into two
   blobs (rare; the outline-fit approach removes it entirely).
+- **WH terrain-layout import — grid removal is the prerequisite for real community
+  images (blocker).** Validation against a real community layout
+  (`test-fixtures/Warhammer Maps/comp_terrain.webp`) showed the hard cases aren't
+  the clean official pack: community images carry an **overlaid grid**, **green/red
+  deployment-zone tints**, and **objective-marker circles**. Findings:
+  - Tints make the mat mis-classify as grey → *phantom* footprints in the zones.
+  - The grid provides dark ink almost everywhere, which **defeats every ink/outline
+    heuristic**: flood-by-outline leaks, outline-component fitting collapses (grid
+    connects all outlines), and the outline-presence phantom filter (`dropUnoutlined`,
+    shipped **off**) inverts — it drops real center pieces on plain mat while keeping
+    grid-surrounded phantoms.
+  What *did* land and help: footprints-first detection with height-classified-last
+  (splits correct; blue never its own piece) and the edge-to-edge merge fix. Getting
+  a gridded/tinted image down to its true piece count needs the **grid detected and
+  subtracted first** (reuse `gridDetect.ts` concepts), then re-run fill/outline
+  segmentation on the de-gridded image. This is the real next step and the gate for
+  both the outline-driven fit above and reliable phantom rejection.
 - **WH terrain-layout import — capture ruins walls as LoS blockers.** The internal
   "recommended ruins placement" L-mark inside each grey footprint is the true
   line-of-sight blocker. Import now *contains* it (folds it into the solid
