@@ -56,7 +56,7 @@ const DEFAULT_MIN_SEGMENT_PX = 1;
 const DEFAULT_CLOSE_RADIUS = 1;
 const DEFAULT_OPEN_RADIUS = 3;
 const DEFAULT_COLUMN_RADIUS = 2;
-const DEFAULT_SIMPLIFY_EPS = 1.5;
+const DEFAULT_SIMPLIFY_EPS = 3;
 
 /**
  * A linework map (walls drawn as black ink on white/parchment) vs. a blueprint
@@ -337,6 +337,50 @@ function simplifyClosedLoop(loop: Vec2[], eps: number): Vec2[] {
   return arc1.slice(0, -1).concat(arc2.slice(0, -1)); // drop the shared/closing endpoints
 }
 
+// A hand-drawn "straight" wall is never exactly axis-aligned: the traced contour
+// wobbles by a pixel or two, so Douglas–Peucker leaves it as a run of short,
+// slightly-tilted segments. Any edge within this angle of horizontal/vertical is
+// treated as "meant to be flat" and snapped square; steeper edges (real diagonals,
+// e.g. a 45° cavern wall) are left untouched.
+const AXIS_SNAP_TAN = Math.tan((12 * Math.PI) / 180);
+
+/**
+ * Flatten near-axis edges of a simplified loop to exactly horizontal/vertical,
+ * then drop the vertices that become collinear — so a wobbly-but-straight wall
+ * collapses to one clean segment instead of a dozen. Mutates the shared loop
+ * vertices in place (a corner shared by two edges stays joined) and returns the
+ * de-duplicated vertex list. Exactly-axis edges are unchanged (dx or dy is 0),
+ * so clean rectilinear input is a no-op.
+ */
+function snapAxisAligned(pts: Vec2[]): Vec2[] {
+  const n = pts.length;
+  if (n < 3) return pts;
+  for (let i = 0; i < n; i++) {
+    const a = pts[i]!;
+    const b = pts[(i + 1) % n]!;
+    const dx = Math.abs(b.x - a.x);
+    const dy = Math.abs(b.y - a.y);
+    if (dy > 0 && dy <= AXIS_SNAP_TAN * dx) {
+      const my = (a.y + b.y) / 2; // near-horizontal → level it
+      a.y = my;
+      b.y = my;
+    } else if (dx > 0 && dx <= AXIS_SNAP_TAN * dy) {
+      const mx = (a.x + b.x) / 2; // near-vertical → plumb it
+      a.x = mx;
+      b.x = mx;
+    }
+  }
+  // Drop vertices whose two edges are (now) collinear, merging the run.
+  const out: Vec2[] = [];
+  for (let i = 0; i < n; i++) {
+    const a = pts[(i - 1 + n) % n]!;
+    const b = pts[i]!;
+    const c = pts[(i + 1) % n]!;
+    if (perpDist(b, a, c) > 1e-6) out.push(b);
+  }
+  return out.length >= 3 ? out : pts;
+}
+
 /** Douglas–Peucker polyline simplification (fixed endpoints). */
 function douglasPeucker(pts: Vec2[], eps: number): Vec2[] {
   if (pts.length < 3) return pts.slice();
@@ -390,7 +434,8 @@ export function analyzeMap(img: PixelBuffer, opts: AnalyzeOptions): MapAnalysis 
   let n = 0;
   for (const loop of traceContours(mask, w, h)) {
     const rotated = rotateToCorner(loop);
-    const simp = eps > 0 ? simplifyClosedLoop(rotated, eps) : rotated;
+    const dp = eps > 0 ? simplifyClosedLoop(rotated, eps) : rotated;
+    const simp = eps > 0 ? snapAxisAligned(dp) : dp;
     for (let i = 0; i < simp.length; i++) {
       const a = simp[i]!;
       const b = simp[(i + 1) % simp.length]!; // close the loop

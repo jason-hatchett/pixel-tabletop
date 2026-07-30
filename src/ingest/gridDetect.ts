@@ -25,29 +25,55 @@ export interface GridDetection {
 const luma = (d: Uint8ClampedArray, i: number): number =>
   0.299 * d[i]! + 0.587 * d[i + 1]! + 0.114 * d[i + 2]!;
 
-/** Per-column horizontal-gradient energy: high where a vertical gridline sits. */
+const lumaAt = (d: Uint8ClampedArray, w: number, h: number, x: number, y: number): number =>
+  x < 0 || y < 0 || x >= w || y >= h ? NaN : luma(d, (y * w + x) * 4);
+
+/**
+ * A raw luma-gradient profile responds hardest to whatever has the most ink —
+ * dense hatching ("solid rock"), thick black walls, and drawn drop-shadows —
+ * none of which is the grid. On a hand-drawn map that non-grid energy biases
+ * both the pitch and (badly) the phase. Instead we count, per line, pixels that
+ * look like a drawn gridline: a thin luma *valley* — the centre darker than both
+ * neighbours `GRID_PROBE` px to each side — sitting on a *uniform* background.
+ * This is specific to gridlines and structurally rejects the three culprits:
+ * hatching (sides are not uniform), thick walls (neighbours are also dark, so no
+ * valley), and shadows (a gradual ramp, not a valley). The result is a clean
+ * periodic comb even where the grid is faint and heavily interrupted.
+ */
+const GRID_PROBE = 3; // px to each side where we sample the line's background
+const GRID_CONTRAST = 16; // min luma the centre must sit below both sides (valley depth)
+const GRID_BG_TOL = 40; // max luma gap between the two sides (else it's a step edge, not a line)
+
+/** Per-column count of vertical-gridline pixels (luma valley, uniform bg L/R). */
 function columnEnergy(img: PixelBuffer): Float64Array {
-  const { data, width, height } = img;
-  const e = new Float64Array(width);
-  for (let x = 1; x < width; x++) {
+  const { data, width: w, height: h } = img;
+  const e = new Float64Array(w);
+  for (let x = 0; x < w; x++) {
     let s = 0;
-    for (let y = 0; y < height; y++) {
-      const row = y * width;
-      s += Math.abs(luma(data, (row + x) * 4) - luma(data, (row + x - 1) * 4));
+    for (let y = 0; y < h; y++) {
+      const l = lumaAt(data, w, h, x - GRID_PROBE, y);
+      const r = lumaAt(data, w, h, x + GRID_PROBE, y);
+      if (Number.isNaN(l) || Number.isNaN(r)) continue;
+      const c = luma(data, (y * w + x) * 4);
+      if (l - c > GRID_CONTRAST && r - c > GRID_CONTRAST && Math.abs(l - r) < GRID_BG_TOL) s++;
     }
     e[x] = s;
   }
   return e;
 }
 
-/** Per-row vertical-gradient energy: high where a horizontal gridline sits. */
+/** Per-row count of horizontal-gridline pixels (luma valley, uniform bg above/below). */
 function rowEnergy(img: PixelBuffer): Float64Array {
-  const { data, width, height } = img;
-  const e = new Float64Array(height);
-  for (let y = 1; y < height; y++) {
+  const { data, width: w, height: h } = img;
+  const e = new Float64Array(h);
+  for (let y = 0; y < h; y++) {
     let s = 0;
-    for (let x = 0; x < width; x++) {
-      s += Math.abs(luma(data, (y * width + x) * 4) - luma(data, ((y - 1) * width + x) * 4));
+    for (let x = 0; x < w; x++) {
+      const t = lumaAt(data, w, h, x, y - GRID_PROBE);
+      const b = lumaAt(data, w, h, x, y + GRID_PROBE);
+      if (Number.isNaN(t) || Number.isNaN(b)) continue;
+      const c = luma(data, (y * w + x) * 4);
+      if (t - c > GRID_CONTRAST && b - c > GRID_CONTRAST && Math.abs(t - b) < GRID_BG_TOL) s++;
     }
     e[y] = s;
   }
@@ -74,11 +100,11 @@ function movingAverage(e: Float64Array, win: number): Float64Array {
 /**
  * Regular pitch + phase of a grid, or null if none is clear.
  *
- * Peak-median gap estimation is fragile: aperiodic strong edges (room outlines,
- * diagonal corridors, legend text) inject spurious peaks that corrupt the gap.
- * Instead we (1) detrend to remove room-scale structure, (2) clip spikes so a
- * few huge edges can't dominate, then (3) find the period by autocorrelation —
- * the periodic grid reinforces at its true lag while aperiodic edges do not.
+ * The energy here is already a gridline-specific count (see columnEnergy), so it
+ * needs no spike clipping — the aperiodic edges a raw gradient produced are gone.
+ * We (1) detrend to remove the room-scale envelope (a grid only occupies rooms,
+ * not the hatched fill between them), then (2) find the period by autocorrelation:
+ * the periodic grid reinforces at its true lag while residual noise does not.
  */
 function periodFromEnergy(e: Float64Array): { pxPerCell: number; offset: number } | null {
   const n = e.length;
@@ -87,18 +113,10 @@ function periodFromEnergy(e: Float64Array): { pxPerCell: number; offset: number 
 
   // Detrend: subtract a broad moving average so room-scale structure drops out.
   const base = movingAverage(e, maxCell * 2);
-  const d = new Float64Array(n);
-  for (let i = 0; i < n; i++) d[i] = e[i]! - base[i]!;
-
-  // Clip spikes to a robust cap (a few × the median magnitude) so a diagonal
-  // wall or legend edge can't swamp the periodic grid signal.
-  const mags = Float64Array.from(d, Math.abs).sort();
-  const median = mags[Math.floor(mags.length / 2)]!;
-  const cap = median > 0 ? median * 4 : Infinity;
   const s = new Float64Array(n);
   let mean = 0;
   for (let i = 0; i < n; i++) {
-    s[i] = Math.max(-cap, Math.min(cap, d[i]!));
+    s[i] = e[i]! - base[i]!;
     mean += s[i]!;
   }
   mean /= n;
@@ -117,15 +135,26 @@ function periodFromEnergy(e: Float64Array): { pxPerCell: number; offset: number 
     for (let i = 0; i + lag < n; i++) sum += s[i]! * s[i + lag]!;
     acf[lag] = sum / ss;
   }
+  // Strength of the best peak anywhere — the gate for "is there a grid at all".
   let best = -Infinity;
+  for (let lag = MIN_CELL + 1; lag < maxCell; lag++) {
+    if (acf[lag]! >= acf[lag - 1]! && acf[lag]! >= acf[lag + 1]! && acf[lag]! > best) best = acf[lag]!;
+  }
+  if (best < 0.2) return null;
+
+  // Pitch = the FUNDAMENTAL, i.e. the smallest-lag peak nearly as strong as the
+  // best. A perfectly regular grid autocorrelates just as hard at every multiple
+  // of its pitch, so the tallest peak is often a harmonic (2×/3×/…); taking the
+  // first strong peak lands on the true pitch directly (no fold-down heuristic,
+  // which mis-fired both ways on real maps).
   let bestLag = 0;
   for (let lag = MIN_CELL + 1; lag < maxCell; lag++) {
-    if (acf[lag]! >= acf[lag - 1]! && acf[lag]! >= acf[lag + 1]! && acf[lag]! > best) {
-      best = acf[lag]!;
+    if (acf[lag]! >= acf[lag - 1]! && acf[lag]! >= acf[lag + 1]! && acf[lag]! >= 0.7 * best) {
       bestLag = lag;
+      break;
     }
   }
-  if (bestLag === 0 || best < 0.2) return null;
+  if (bestLag === 0) return null;
 
   // Sub-pixel peak location by parabolic interpolation of the three ACF samples
   // around the integer lag — a real grid's pitch is rarely a whole number, and
@@ -141,17 +170,7 @@ function periodFromEnergy(e: Float64Array): { pxPerCell: number; offset: number 
     return Math.abs(delta) <= 1 ? lag + delta : lag;
   };
 
-  // The strongest peak may be a harmonic; prefer a sub-multiple that is itself a
-  // strong peak (the fundamental). Refine the strong peak first, then divide, so
-  // the fundamental keeps sub-pixel accuracy.
-  let pxPerCell = refine(bestLag);
-  for (const k of [2, 3]) {
-    const sub = Math.round(bestLag / k);
-    if (sub >= MIN_CELL && acf[sub]! >= 0.6 * best) {
-      pxPerCell = refine(bestLag) / k;
-      break;
-    }
-  }
+  const pxPerCell = refine(bestLag);
 
   // Sub-pixel phase: circular mean of the positive (gridline) energy at the grid
   // frequency. Robust and independent of where the first line happens to fall.
