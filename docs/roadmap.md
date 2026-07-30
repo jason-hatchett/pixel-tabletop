@@ -416,6 +416,17 @@ game-design.md §9:
   draw new footprints over the image. Fold in the related want for terrain to snap
   **edge-to-edge / corner-to-corner** with neighbours. See
   [architecture/adr-0011-warhammer-terrain-layout-import.md](architecture/adr-0011-warhammer-terrain-layout-import.md).
+- **40k image import no longer places a plain background skin.** As of the
+  terrain-layout import (ADR-0011), the 40k image path (`main.ts`
+  `reconstructTerrainLayout`) runs terrain detection and **discards the image** —
+  there is no way to drop a JPEG/PNG battlemat as a background *skin* under a 40k
+  table (D&D still does via `placeImage`). This regresses the Phase-1
+  image-terrain use case for 40k. Decide whether to offer both (a "plain
+  background" choice alongside "terrain layout") or accept extraction-only for 40k.
+- **Preview height class duplicates `heightClass()`.** `main.ts` classifies the
+  review-gate preview footprints with a hardcoded `p.heightMm > 60` instead of the
+  exported `heightClass()` (`terrain.ts`); a threshold change would not propagate.
+  Trivial cleanup — call `heightClass(p.heightMm) === "tall"`.
 - **WH terrain-layout import — capture ruins walls as LoS blockers.** The internal
   "recommended ruins placement" L-mark inside each grey footprint is the true
   line-of-sight blocker. Import now *contains* it (folds it into the solid
