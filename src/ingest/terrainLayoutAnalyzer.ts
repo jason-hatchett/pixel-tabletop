@@ -113,6 +113,9 @@ export interface AnalyzeLayoutOptions {
 
 const MM_PER_INCH = 25.4;
 const DEFAULT_RECT_FILL_MIN = 0.72;
+// Each colour must be at least this fraction of a footprint's fill for it to count
+// as a grey/blue split rather than a single-height piece.
+const SPLIT_MIN_FRAC = 0.2;
 const DEFAULT_SNAP_ANGLE_STEP_DEG = 15;
 
 /**
@@ -669,12 +672,7 @@ function boxesToPieces(
   return out;
 }
 
-// --- split-footprint detection (one outline, half tall / half low) ---
-
-function snapDistMm(longMm: number, shortMm: number, roster: Footprint[]): number {
-  const s = snapToCatalogSize(longMm, shortMm, roster);
-  return Math.hypot(longMm - s.longMm, shortMm - s.shortMm);
-}
+// --- split-footprint decomposition (one outline, half tall / half low) ---
 
 function makeRectPiece(cx: number, cy: number, longMm: number, shortMm: number, facing: number, heightMm: number): DetectedTerrain {
   return {
@@ -731,54 +729,6 @@ function emitSplit(
 }
 
 /**
- * Detect split footprints: a grey blob and blue blob that together fill one
- * rectangle matching a catalog size — but where neither half matches a size on
- * its own — are one outline shaded half tall / half low. Emit the two halves
- * sized from the snapped whole (ADR-0011 "A"); leave everything else to be
- * snapped individually. Only runs when a `roster` (catalog) is in play.
- */
-function mergeSplitFootprints(
-  grey: Blob[],
-  blue: Blob[],
-  w: number,
-  origin: { x: number; y: number },
-  mmPerPx: number,
-  roster: Footprint[],
-  snapStepDeg: number,
-): { splits: DetectedTerrain[]; usedGrey: Set<number>; usedBlue: Set<number> } {
-  const splits: DetectedTerrain[] = [];
-  const usedGrey = new Set<number>();
-  const usedBlue = new Set<number>();
-  const gBoxes = grey.map((b) => orientedBox(b.pixels, w));
-  const bBoxes = blue.map((b) => orientedBox(b.pixels, w));
-  const CATALOG_TOL = 1.5 * MM_PER_INCH; // combined must snap within this
-  const OFF_CATALOG = 1.0 * MM_PER_INCH; // a half must miss every size by more than this
-  for (let gi = 0; gi < grey.length; gi++) {
-    const gDist = snapDistMm(gBoxes[gi]!.long * mmPerPx, gBoxes[gi]!.short * mmPerPx, roster);
-    if (gDist <= OFF_CATALOG) continue; // grey alone is already a clean size — not a split half
-    let best: { bi: number; ub: OrientedBox; cDist: number } | null = null;
-    for (let bi = 0; bi < blue.length; bi++) {
-      if (usedBlue.has(bi)) continue;
-      const bDist = snapDistMm(bBoxes[bi]!.long * mmPerPx, bBoxes[bi]!.short * mmPerPx, roster);
-      if (bDist <= OFF_CATALOG) continue;
-      const union = grey[gi]!.pixels.concat(blue[bi]!.pixels);
-      const ub = orientedBox(union, w);
-      const unionFill = union.length / Math.max(1, ub.long * ub.short);
-      if (unionFill < 0.7) continue; // the two colours tile a solid rectangle (adjacent, not scattered)
-      const cDist = snapDistMm(ub.long * mmPerPx, ub.short * mmPerPx, roster);
-      if (cDist > CATALOG_TOL || cDist >= gDist || cDist >= bDist) continue; // whole beats either half
-      if (!best || cDist < best.cDist) best = { bi, ub, cDist };
-    }
-    if (best) {
-      usedGrey.add(gi);
-      usedBlue.add(best.bi);
-      splits.push(...emitSplit(gBoxes[gi]!, grey[gi]!.pixels.length, bBoxes[best.bi]!, blue[best.bi]!.pixels.length, best.ub, origin, mmPerPx, roster, snapStepDeg));
-    }
-  }
-  return { splits, usedGrey, usedBlue };
-}
-
-/**
  * Analyze a Warhammer terrain-layout image into board-relative `DetectedTerrain`.
  * `boardWidthMm` (from the chosen battlefield preset) sets the pixel→mm scale.
  */
@@ -814,31 +764,40 @@ export function analyzeTerrainLayout(img: PixelBuffer, opts: AnalyzeLayoutOption
   };
 
   const origin = { x: board.x, y: board.y };
-  // Grey footprints: segment (outline-aware, so neighbours stay separate), then
-  // per-blob fill the internal ruins-wall notch so each reads as a solid
-  // rectangle. Filling per-blob — not with a board-wide close — is what stops two
-  // adjacent tall pieces being merged into one oversized footprint (ADR-0011).
-  let greyBlobs = prep(greyRaw);
-  if (opts.containWalls ?? true) greyBlobs = greyBlobs.map((b) => fillBlobHoles(b, w));
-  const blueBlobs = prep(blueRaw);
+  // Detect FOOTPRINTS from the combined terrain fill (grey ∪ blue) so a grey/blue
+  // split reads as ONE footprint and blue is never promoted to its own piece; the
+  // outline-aware close keeps genuinely separate neighbours apart (an outline sits
+  // between them), while a true split has no outline dividing its two colours.
+  // Height — tall / low / split — is decided per footprint AFTER, from its
+  // grey-vs-blue content (ADR-0011: blue is a "low" property of a piece, not a piece).
+  const terrainRaw = new Uint8Array(w * h);
+  for (let i = 0; i < w * h; i++) terrainRaw[i] = greyRaw[i] || blueRaw[i] ? 1 : 0;
+  let blobs = prep(terrainRaw);
+  if (opts.containWalls ?? true) blobs = blobs.map((b) => fillBlobHoles(b, w));
 
-  // Split footprints first (needs the catalog): a grey + blue pair that together
-  // form one catalog rectangle becomes two correctly-sized adjacent halves; the
-  // rest are snapped individually.
-  let splits: DetectedTerrain[] = [];
-  let usedGrey = new Set<number>();
-  let usedBlue = new Set<number>();
-  if (roster && (opts.mergeSplits ?? true)) {
-    ({ splits, usedGrey, usedBlue } = mergeSplitFootprints(greyBlobs, blueBlobs, w, origin, mmPerPx, roster, snapStepDeg));
+  const splittable = roster !== null && (opts.mergeSplits ?? true);
+  const all: DetectedTerrain[] = [];
+  for (const blob of blobs) {
+    let g = 0;
+    let b = 0;
+    for (const i of blob.pixels) {
+      if (greyRaw[i] === 1) g++;
+      else if (blueRaw[i] === 1) b++;
+    }
+    const tot = g + b || 1;
+    if (splittable && Math.min(g, b) >= SPLIT_MIN_FRAC * tot) {
+      // One footprint shaded part tall (grey) / part low (blue): decompose into
+      // the two adjacent halves, sized from the snapped whole (ADR-0011 "A").
+      const greyPx = blob.pixels.filter((i) => greyRaw[i] === 1);
+      const bluePx = blob.pixels.filter((i) => blueRaw[i] === 1);
+      all.push(
+        ...emitSplit(orientedBox(greyPx, w), g, orientedBox(bluePx, w), b, orientedBox(blob.pixels, w), origin, mmPerPx, roster!, snapStepDeg),
+      );
+    } else {
+      const heightMm = g >= b ? HEIGHT_TALL_MM : HEIGHT_LOW_MM;
+      all.push(...boxesToPieces([blob], w, origin, mmPerPx, heightMm, rectFillMin, snapStepDeg, roster));
+    }
   }
-  const remGrey = greyBlobs.filter((_, i) => !usedGrey.has(i));
-  const remBlue = blueBlobs.filter((_, i) => !usedBlue.has(i));
-
-  const all = [
-    ...splits,
-    ...boxesToPieces(remGrey, w, origin, mmPerPx, HEIGHT_TALL_MM, rectFillMin, snapStepDeg, roster),
-    ...boxesToPieces(remBlue, w, origin, mmPerPx, HEIGHT_LOW_MM, rectFillMin, snapStepDeg, roster),
-  ];
   // Separate the clean rectangles so small detection overlaps become clean
   // edge/corner contact; ambiguous (flagged) blobs are left where they were.
   const rect = all.filter((p) => p.rect);
