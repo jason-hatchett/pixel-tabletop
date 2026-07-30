@@ -22,6 +22,7 @@ const terrain = (id: string): TerrainPiece => ({
   cover: "heavy",
   difficult: true,
   surface: null,
+  heightMm: 0,
   pattern: "hatch",
   fill: 0x8a8f9c,
   border: 0xd8dde3,

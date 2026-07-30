@@ -403,6 +403,26 @@ game-design.md §9:
   placement in plain-JSON `BoardState` (ADR-0001/0002). Whether it extends
   `TerrainPiece` (`terrain.ts:41`) or is a new type, and how LoS/cover relate to
   it, are open architect calls — see [specs/image-terrain.md](specs/image-terrain.md).
+- **WH terrain-layout import — interactive footprint editor (ADR-0011).** The
+  Warhammer terrain-layout importer (`src/ingest/terrainLayoutAnalyzer.ts` +
+  review gate `src/ui/terrainLayoutConfirm.ts`) auto-detects area terrain and
+  snaps to the chosen edition's sizes, but two cases need hand-correction and are
+  deferred to a planned editor in the review gate: **(a)** split grey/blue
+  footprints — one physical footprint shaded half tall / half low — decompose into
+  two adjacent pieces (ADR-0011 decision "A"), but each half is a sub-rectangle
+  (e.g. 12×6 → two 12×3) that is off-catalog and so mis-sized by snapping; and
+  **(b)** any merged / off-edition detection. The editor should let users select /
+  move / delete pieces, **resize to custom dimensions in 0.5" increments**, and
+  draw new footprints over the image. Fold in the related want for terrain to snap
+  **edge-to-edge / corner-to-corner** with neighbours. See
+  [architecture/adr-0011-warhammer-terrain-layout-import.md](architecture/adr-0011-warhammer-terrain-layout-import.md).
+- **WH terrain-layout import — capture ruins walls as LoS blockers.** The internal
+  "recommended ruins placement" L-mark inside each grey footprint is the true
+  line-of-sight blocker. Import now *contains* it (folds it into the solid
+  footprint) and it is cleanly detectable by colour, but it is **not captured**.
+  Future work: extract each footprint's L as wall segments (mm, board-relative) and
+  feed them to the LoS engine (`walls.ts`/`los.ts`) so ruins block sight correctly.
+  See ADR-0011 ("Internal ruins walls").
 - **Persistence open questions (ADR-0007).** The envelope/migration home, whether
   `loadState` is a logged wire action or a control frame, board identity for
   multi-board, and how a persisted `players` registry re-binds to live seats are
