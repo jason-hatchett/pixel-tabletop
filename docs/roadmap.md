@@ -448,6 +448,12 @@ game-design.md §9:
   subtracted first** (reuse `gridDetect.ts` concepts), then re-run fill/outline
   segmentation on the de-gridded image. This is the real next step and the gate for
   both the outline-driven fit above and reliable phantom rejection.
+- **40k image import is terrain-extraction-only (decided).** The 40k image path
+  (`main.ts` `reconstructTerrainLayout`) runs terrain detection and **discards the
+  image** — there is no plain "battlemat background *skin*" for 40k (D&D still has
+  one via `placeImage`). This was a deliberate call, not a gap: 40k play wants
+  honest area-terrain footprints, not a decorative raster. Recorded here so the
+  Phase-1 "40k background image" outcome isn't mistaken for missing work.
 - **WH terrain-layout import — capture ruins walls as LoS blockers.** The internal
   "recommended ruins placement" L-mark inside each grey footprint is the true
   line-of-sight blocker. Import now *contains* it (folds it into the solid

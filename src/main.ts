@@ -21,7 +21,7 @@ import { confirmTerrainLayoutModal, type TerrainConfirmResult, type FootprintPx 
 import type { BoardState } from "./domain/state.js";
 import type { Wall } from "./domain/walls.js";
 import type { TerrainPiece, AreaTerrainEdition } from "./domain/terrain.js";
-import { AREA_TERRAIN_EDITIONS } from "./domain/terrain.js";
+import { AREA_TERRAIN_EDITIONS, heightClass } from "./domain/terrain.js";
 import type { PixelBuffer } from "./ingest/decode.js";
 
 // Standard Warhammer 40k battlefield sizes (real inches). A 40k map is scaled to
@@ -440,7 +440,7 @@ async function reconstructTerrainLayout(file: File, widthMm: number, heightMm: n
     long: (p.base.kind === "rect" ? p.base.halfWidthMm * 2 : 0) / mmPerPx,
     short: (p.base.kind === "rect" ? p.base.halfHeightMm * 2 : 0) / mmPerPx,
     angle: p.facing,
-    cls: p.heightMm > 60 ? "tall" : "low",
+    cls: heightClass(p.heightMm) === "tall" ? "tall" : "low",
     flagged: !p.rect,
   }));
 
