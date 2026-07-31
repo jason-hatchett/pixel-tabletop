@@ -403,6 +403,21 @@ game-design.md §9:
   placement in plain-JSON `BoardState` (ADR-0001/0002). Whether it extends
   `TerrainPiece` (`terrain.ts:41`) or is a new type, and how LoS/cover relate to
   it, are open architect calls — see [specs/image-terrain.md](specs/image-terrain.md).
+- **WH terrain-layout detection — rewrite to outline-box + editor (ADR-0012).**
+  Validating the current fill-based `terrainLayoutAnalyzer.ts` against real
+  community images (`test-fixtures/Warhammer Maps/comp_terrain.webp`,
+  `wh_terrain_1.png`) showed fixed colour-fill thresholds are overfit and don't
+  transfer between renders. The decided redesign detects footprints from the **dark
+  outline** (grid/tint/splits/walls all fall out), with universal structural fixes
+  (exclude-blue-from-outline, strip frame *border band* + bbox scale, partial-
+  rectangle acceptance by perimeter coverage, extent-centred boxes, robust circular-
+  marker removal) and an **adaptive** brightness threshold. Validated: comp 12/12,
+  wh1 10/~12 with one config. Detection is best-effort for arbitrary images; the
+  **footprint editor** (below) is the guaranteed finisher and becomes the priority.
+  Ruled out: intensity-only thresholding and structural grid removal (both fail on
+  the grid). Future core: catalog-constrained Hough partial-rectangle fitting.
+  Calibration tool committed at `tools/terrain-threshold-tuner.html`. Full decision +
+  findings: [architecture/adr-0012-terrain-layout-detection-redesign.md](architecture/adr-0012-terrain-layout-detection-redesign.md).
 - **WH terrain-layout import — interactive footprint editor (ADR-0011).** The
   Warhammer terrain-layout importer (`src/ingest/terrainLayoutAnalyzer.ts` +
   review gate `src/ui/terrainLayoutConfirm.ts`) auto-detects area terrain and
