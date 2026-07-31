@@ -285,7 +285,10 @@ function isBlue(r: number, g: number, b: number): boolean {
 function isGrey(r: number, g: number, b: number): boolean {
   const bright = (r + g + b) / 3;
   const sat = Math.max(r, g, b) - Math.min(r, g, b);
-  return sat < 25 && bright > 60 && bright < 155;
+  // sat < 18 (not 25): real grey ruins are near-neutral (sat ~5), while a green
+  // deployment-zone tint sits around sat ~23 — the looser bound let the whole
+  // green zone read as grey terrain and spawn phantom footprints.
+  return sat < 18 && bright > 60 && bright < 155;
 }
 /** Near-black, low-saturation ink = the board border frame and piece outlines. */
 function isDark(r: number, g: number, b: number): boolean {

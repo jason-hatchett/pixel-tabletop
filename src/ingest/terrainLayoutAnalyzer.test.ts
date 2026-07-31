@@ -163,6 +163,21 @@ describe("analyzeTerrainLayout", () => {
     expect(halfH(clean[0]!) * 2).toBeCloseTo(inchesToMm(6), 0);
   });
 
+  it("ignores a saturated deployment-zone tint that isn't neutral grey terrain", () => {
+    // Real grey ruins are near-neutral (sat ~5); a green deployment zone sits
+    // around sat ~23. `isGrey` (sat < 18) must keep the ruins but reject the tint,
+    // else the whole zone spawns phantom footprints.
+    const img = canvas(700, 500, BATTLEMAT);
+    fillRect(img, 100, 100, 100 + 152, 100 + 102, GREY); // neutral grey ruins
+    const GREEN_TINT: [number, number, number] = [95, 118, 95]; // sat ~23, bright ~103
+    fillRect(img, 420, 100, 420 + 152, 100 + 102, GREEN_TINT);
+
+    const res = analyzeTerrainLayout(img, { boardWidthMm: 700, edition: "10e" });
+    // Only the neutral grey is terrain; the tinted block is not a phantom piece.
+    expect(res.pieces.length).toBe(1);
+    expect(res.pieces[0]!.heightMm).toBe(HEIGHT_TALL_MM);
+  });
+
   it("dropUnoutlined removes a fill blob that has no surrounding outline (clean case)", () => {
     // A real piece (dark-edged) and a phantom (bare grey fill, no outline) — as a
     // deployment-zone tint region would read. With dropUnoutlined the phantom goes.
