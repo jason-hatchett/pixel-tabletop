@@ -431,38 +431,6 @@ game-design.md §9:
   draw new footprints over the image. Fold in the related want for terrain to snap
   **edge-to-edge / corner-to-corner** with neighbours. See
   [architecture/adr-0011-warhammer-terrain-layout-import.md](architecture/adr-0011-warhammer-terrain-layout-import.md).
-- **WH terrain-layout import — outline-driven catalog fit (durable segmentation).**
-  The current pipeline segments the colour *fill* (morphology → PCA box → snap to
-  the nearest catalog size). This is inherently ambiguous for pieces laid
-  edge-to-edge: two 6×4 tall pieces occupy the *same pixels* as one 12×6, so no
-  fill-only method can separate them — only the dark seam between them can. The
-  merging bug this caused is fixed short-term by an **outline-aware close** (fill
-  can't bridge a piece's dark border) plus a **per-blob hole fill** for internal
-  walls (`terrainLayoutAnalyzer.ts`). The durable fix (Option B, deferred): drive
-  segmentation from the **dark outline loops**, fitting each loop to the best
-  catalog `{size, position, rotation}` — a tiny search over 5 sizes/edition ×
-  orientation — and validating by fill. Outlines separate touching pieces natively
-  and internal ruins walls sit *inside* a loop, so they never spawn a piece. Folds
-  into the ADR-0011 footprint-editor work. Remaining edge case in the short-term
-  fix: a ruins wall that fully bisects a grey footprint could split it into two
-  blobs (rare; the outline-fit approach removes it entirely).
-- **WH terrain-layout import — grid removal is the prerequisite for real community
-  images (blocker).** Validation against a real community layout
-  (`test-fixtures/Warhammer Maps/comp_terrain.webp`) showed the hard cases aren't
-  the clean official pack: community images carry an **overlaid grid**, **green/red
-  deployment-zone tints**, and **objective-marker circles**. Findings:
-  - Tints make the mat mis-classify as grey → *phantom* footprints in the zones.
-  - The grid provides dark ink almost everywhere, which **defeats every ink/outline
-    heuristic**: flood-by-outline leaks, outline-component fitting collapses (grid
-    connects all outlines), and the outline-presence phantom filter (`dropUnoutlined`,
-    shipped **off**) inverts — it drops real center pieces on plain mat while keeping
-    grid-surrounded phantoms.
-  What *did* land and help: footprints-first detection with height-classified-last
-  (splits correct; blue never its own piece) and the edge-to-edge merge fix. Getting
-  a gridded/tinted image down to its true piece count needs the **grid detected and
-  subtracted first** (reuse `gridDetect.ts` concepts), then re-run fill/outline
-  segmentation on the de-gridded image. This is the real next step and the gate for
-  both the outline-driven fit above and reliable phantom rejection.
 - **40k image import is terrain-extraction-only (decided).** The 40k image path
   (`main.ts` `reconstructTerrainLayout`) runs terrain detection and **discards the
   image** — there is no plain "battlemat background *skin*" for 40k (D&D still has
