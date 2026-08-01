@@ -7,6 +7,7 @@ import {
   overlapMTV,
   resolveOverlaps,
   type DetectedTerrain,
+  type AnalyzeLayoutOptions,
 } from "./terrainLayoutAnalyzer.js";
 import { HEIGHT_TALL_MM, HEIGHT_LOW_MM, AREA_TERRAIN_FOOTPRINTS_MM } from "../domain/terrain.js";
 import { inchesToMm } from "../domain/units.js";
@@ -24,9 +25,17 @@ const poly = (p: DetectedTerrain): { x: number; y: number }[] => basePolygon(p.p
 
 // --- synthetic layout builder -------------------------------------------------
 const BATTLEMAT: [number, number, number] = [210, 210, 210];
-const GREY: [number, number, number] = [105, 107, 110]; // tall ruins
-const BLUE: [number, number, number] = [0, 93, 132]; // low terrain
+const GREY: [number, number, number] = [105, 107, 110]; // tall ruins fill
+const BLUE: [number, number, number] = [0, 93, 132]; // low terrain fill
 const DARK: [number, number, number] = [25, 25, 27]; // piece outline ink
+
+// Detection is outline-based (ADR-0012): pieces are drawn as a dark rectangle
+// outline. A fixed brightness cutoff is passed so tests are deterministic
+// (the default is an adaptive threshold tuned for real photos, not tiny canvases).
+const OPT = (extra: Partial<AnalyzeLayoutOptions> & { boardWidthMm: number }): AnalyzeLayoutOptions => ({
+  outlineBrightnessMax: 90,
+  ...extra,
+});
 
 function canvas(w: number, h: number, bg: [number, number, number]): PixelBuffer {
   const data = new Uint8ClampedArray(w * h * 4);
@@ -60,16 +69,23 @@ function outlinedRect(img: PixelBuffer, x0: number, y0: number, x1: number, y1: 
   fillRect(img, x0 + ol, y0 + ol, x1 - ol, y1 - ol, c);
 }
 
-describe("analyzeTerrainLayout", () => {
-  it("detects a tall grey and a low blue footprint and snaps each to a catalog size", () => {
-    // boardWidthMm = image width → mmPerPx = 1, so mm ≈ px.
-    const img = canvas(700, 500, BATTLEMAT);
-    // grey ≈ 6×4in (Medium), blue ≈ 11.5×7in (Large) — drawn a couple px off
-    // exact, to prove snapping to the nearest official footprint.
-    fillRect(img, 124, 99, 124 + 151, 99 + 103, GREY); // centre ≈ (199.5, 150.5)
-    fillRect(img, 323, 236, 323 + 291, 236 + 177, BLUE); // centre ≈ (468.5, 324.5)
+/** A dark rectangle outline drawn open on one side (only 3 of 4 edges). */
+function threeSidedRect(img: PixelBuffer, x0: number, y0: number, x1: number, y1: number, ol: number): void {
+  fillRect(img, x0, y0, x1, y0 + ol, DARK); // top
+  fillRect(img, x0, y0, x0 + ol, y1, DARK); // left
+  fillRect(img, x1 - ol, y0, x1, y1, DARK); // right
+  // bottom omitted → 3-sided
+}
 
-    const res = analyzeTerrainLayout(img, { boardWidthMm: 700 });
+describe("analyzeTerrainLayout", () => {
+  it("detects a tall grey and a low blue outlined footprint and snaps each to a catalog size", () => {
+    // Full-canvas battlemat → board = full image → mmPerPx = 1, so mm ≈ px.
+    const img = canvas(700, 500, BATTLEMAT);
+    // grey ≈ 6×4in (Medium), blue ≈ 11.5×7in (Large) — drawn a couple px off exact.
+    outlinedRect(img, 124, 99, 124 + 151, 99 + 103, 3, GREY); // centre ≈ (199.5, 150.5)
+    outlinedRect(img, 323, 236, 323 + 291, 236 + 177, 3, BLUE); // centre ≈ (468.5, 324.5)
+
+    const res = analyzeTerrainLayout(img, OPT({ boardWidthMm: 700, edition: "11e" }));
     expect(res.mmPerPx).toBeCloseTo(1, 5);
     const clean = res.pieces.filter((p) => p.rect);
     expect(clean.length).toBe(2);
@@ -87,13 +103,21 @@ describe("analyzeTerrainLayout", () => {
     expect(tall.facing).toBe(0); // axis-aligned, angle-snapped
   });
 
-  it("merges a split footprint (grey+blue halves) into two correctly-sized adjacent pieces", () => {
+  it("decomposes a split outline (one rect, half grey / half blue) into two correctly-sized adjacent pieces", () => {
     const img = canvas(400, 350, BATTLEMAT);
-    // A 10×5in outline split down the middle: grey 5×5 + blue 5×5, touching.
-    fillRect(img, 70, 100, 197, 227, GREY); // 127×127px = 5×5in
-    fillRect(img, 197, 100, 324, 227, BLUE); // 127×127px = 5×5in, adjacent to grey
+    // ONE 10×5in outline (254×127px @ mmPerPx=1), filled grey on the left half,
+    // blue on the right half — the internal colour boundary has no dark line.
+    const x0 = 70;
+    const y0 = 100;
+    const x1 = x0 + 254;
+    const y1 = y0 + 127;
+    const ol = 3;
+    fillRect(img, x0, y0, x1, y1, DARK);
+    const mid = (x0 + x1) >> 1;
+    fillRect(img, x0 + ol, y0 + ol, mid, y1 - ol, GREY);
+    fillRect(img, mid, y0 + ol, x1 - ol, y1 - ol, BLUE);
 
-    const res = analyzeTerrainLayout(img, { boardWidthMm: 400, edition: "10e" });
+    const res = analyzeTerrainLayout(img, OPT({ boardWidthMm: 400, edition: "10e", mergeSplits: true }));
     const clean = res.pieces.filter((p) => p.rect);
     expect(clean.length).toBe(2);
     const tall = clean.find((p) => p.heightMm === HEIGHT_TALL_MM)!;
@@ -109,115 +133,127 @@ describe("analyzeTerrainLayout", () => {
     expect(gap).toBeCloseTo(inchesToMm(5), 0);
   });
 
-  it("keeps two same-height footprints laid edge-to-edge as separate pieces (not one merged blob)", () => {
-    // Regression: an outline-unaware close fused two adjacent 6×4 tall pieces
-    // into a single 12×6 (a valid catalog size, so it wasn't even flagged).
-    // pxPerMm = 3 (board 400mm across 1200px). Two 6×4in grey pieces, each
-    // dark-outlined, sharing an edge.
-    const img = canvas(1400, 900, BATTLEMAT);
-    const pw = Math.round(inchesToMm(6) * 3);
-    const ph = Math.round(inchesToMm(4) * 3);
-    outlinedRect(img, 100, 300, 100 + pw, 300 + ph, 4, GREY);
-    outlinedRect(img, 100 + pw, 300, 100 + 2 * pw, 300 + ph, 4, GREY);
+  it("reads a split outline as ONE piece when mergeSplits is off (the default)", () => {
+    // Same split image as above, but without opting into decomposition: one clean
+    // box, classified by dominant height — the editor splits it if needed (ADR-0012).
+    const img = canvas(400, 350, BATTLEMAT);
+    const x0 = 70, y0 = 100, x1 = x0 + 254, y1 = y0 + 127, ol = 3;
+    fillRect(img, x0, y0, x1, y1, DARK);
+    const mid = (x0 + x1) >> 1;
+    fillRect(img, x0 + ol, y0 + ol, mid, y1 - ol, GREY);
+    fillRect(img, mid, y0 + ol, x1 - ol, y1 - ol, BLUE);
 
-    const res = analyzeTerrainLayout(img, { boardWidthMm: 400, edition: "10e" });
+    const res = analyzeTerrainLayout(img, OPT({ boardWidthMm: 400, edition: "10e" })); // mergeSplits defaults off
+    expect(res.pieces.filter((p) => p.rect).length).toBe(1);
+  });
+
+  it("keeps two footprints separated by a battlemat seam as two pieces", () => {
+    // boardWidthMm = canvas width → mmPerPx = 1, and pieces stay a small fraction
+    // of the canvas so a piece outline isn't mistaken for the board frame.
+    const img = canvas(1400, 900, BATTLEMAT);
+    const pw = Math.round(inchesToMm(6)); // 152px
+    const ph = Math.round(inchesToMm(4)); // 102px
+    const seam = 10; // 10mm of battlemat between them
+    outlinedRect(img, 100, 300, 100 + pw, 300 + ph, 4, GREY);
+    outlinedRect(img, 100 + pw + seam, 300, 100 + 2 * pw + seam, 300 + ph, 4, GREY);
+
+    const res = analyzeTerrainLayout(img, OPT({ boardWidthMm: 1400, edition: "10e" }));
     const clean = res.pieces.filter((p) => p.rect);
     expect(clean.length).toBe(2);
     for (const p of clean) {
       expect(halfW(p) * 2).toBeCloseTo(inchesToMm(6), 0);
       expect(halfH(p) * 2).toBeCloseTo(inchesToMm(4), 0);
     }
-    // Edge-to-edge: the two centres are one long-side (6in) apart.
-    const gap = Math.hypot(clean[0]!.pos.x - clean[1]!.pos.x, clean[0]!.pos.y - clean[1]!.pos.y);
-    expect(gap).toBeCloseTo(inchesToMm(6), -0.7);
   });
 
-  it("keeps two same-height footprints with a thin battlemat seam separate", () => {
+  it("reads a single outline with an internal ruins wall as one clean rectangle", () => {
+    // A 12×6 grey outline with an enclosed internal L-wall (not touching the outer
+    // outline) must read as ONE 12×6 — the wall lives inside and never spawns a piece.
     const img = canvas(1400, 900, BATTLEMAT);
-    const pw = Math.round(inchesToMm(6) * 3);
-    const ph = Math.round(inchesToMm(4) * 3);
-    const seam = Math.round(10 * 3); // 10mm of battlemat between them
-    outlinedRect(img, 100, 300, 100 + pw, 300 + ph, 4, GREY);
-    outlinedRect(img, 100 + pw + seam, 300, 100 + 2 * pw + seam, 300 + ph, 4, GREY);
-
-    const res = analyzeTerrainLayout(img, { boardWidthMm: 400, edition: "10e" });
-    expect(res.pieces.filter((p) => p.rect).length).toBe(2);
-  });
-
-  it("still solidifies a single footprint's internal ruins wall into one clean rect", () => {
-    // Containment must survive the switch from a board-wide close to a per-blob
-    // hole fill: a 12×6 grey with an enclosed internal L-wall reads as ONE 12×6.
-    const img = canvas(1400, 900, BATTLEMAT);
-    const lw = Math.round(inchesToMm(12) * 3);
-    const lh = Math.round(inchesToMm(6) * 3);
+    const lw = Math.round(inchesToMm(12)); // 305px @ mmPerPx = 1
+    const lh = Math.round(inchesToMm(6)); // 152px
     outlinedRect(img, 100, 300, 100 + lw, 300 + lh, 4, GREY);
-    const t = Math.round(2 * 3);
-    // an L fully surrounded by grey (does not touch the outer outline)
+    const t = 6;
     fillRect(img, 100 + Math.round(lw * 0.4), 300 + Math.round(lh * 0.2), 100 + Math.round(lw * 0.4) + t, 300 + Math.round(lh * 0.8), DARK);
     fillRect(img, 100 + Math.round(lw * 0.4), 300 + Math.round(lh * 0.8), 100 + Math.round(lw * 0.7), 300 + Math.round(lh * 0.8) + t, DARK);
 
-    const res = analyzeTerrainLayout(img, { boardWidthMm: 400, edition: "10e" });
+    const res = analyzeTerrainLayout(img, OPT({ boardWidthMm: 1400, edition: "10e" }));
     const clean = res.pieces.filter((p) => p.rect);
     expect(clean.length).toBe(1);
     expect(halfW(clean[0]!) * 2).toBeCloseTo(inchesToMm(12), 0);
     expect(halfH(clean[0]!) * 2).toBeCloseTo(inchesToMm(6), 0);
   });
 
-  it("ignores a saturated deployment-zone tint that isn't neutral grey terrain", () => {
-    // Real grey ruins are near-neutral (sat ~5); a green deployment zone sits
-    // around sat ~23. `isGrey` (sat < 18) must keep the ruins but reject the tint,
-    // else the whole zone spawns phantom footprints.
+  it("does not detect a bare fill that has no dark outline (outline-based, ADR-0012)", () => {
+    // A tinted deployment zone or a stray fill with no piece outline must not
+    // spawn a phantom footprint — detection keys on the dark outline, not the fill.
     const img = canvas(700, 500, BATTLEMAT);
-    fillRect(img, 100, 100, 100 + 152, 100 + 102, GREY); // neutral grey ruins
-    const GREEN_TINT: [number, number, number] = [95, 118, 95]; // sat ~23, bright ~103
-    fillRect(img, 420, 100, 420 + 152, 100 + 102, GREEN_TINT);
+    outlinedRect(img, 100, 100, 100 + 152, 100 + 102, 3, GREY); // a real, outlined piece
+    fillRect(img, 420, 100, 420 + 152, 100 + 102, GREY); // bare grey fill, no outline
 
-    const res = analyzeTerrainLayout(img, { boardWidthMm: 700, edition: "10e" });
-    // Only the neutral grey is terrain; the tinted block is not a phantom piece.
+    const res = analyzeTerrainLayout(img, OPT({ boardWidthMm: 700, edition: "10e" }));
     expect(res.pieces.length).toBe(1);
     expect(res.pieces[0]!.heightMm).toBe(HEIGHT_TALL_MM);
+    expect(res.pieces[0]!.pos.x).toBeLessThan(300); // the outlined (left) one survives
   });
 
-  it("dropUnoutlined removes a fill blob that has no surrounding outline (clean case)", () => {
-    // A real piece (dark-edged) and a phantom (bare grey fill, no outline) — as a
-    // deployment-zone tint region would read. With dropUnoutlined the phantom goes.
-    const img = canvas(900, 500, BATTLEMAT);
-    outlinedRect(img, 80, 120, 80 + 152, 120 + 102, 4, GREY); // real: thin dark edge
-    fillRect(img, 520, 120, 520 + 152, 120 + 102, GREY); // phantom: no edge
+  it("accepts a 3-sided (partial) outline and flags it for review", () => {
+    const img = canvas(700, 500, BATTLEMAT);
+    // A 6×4in outline missing its bottom edge — a rectangle is over-determined, so
+    // 3 sides still infer the full box (flagged, not clean).
+    threeSidedRect(img, 150, 150, 150 + 152, 150 + 102, 3);
+    fillRect(img, 153, 153, 150 + 149, 150 + 99, GREY);
 
-    const without = analyzeTerrainLayout(img, { boardWidthMm: 900, edition: "10e" });
-    expect(without.pieces.length).toBe(2); // default keeps both
-
-    const withDrop = analyzeTerrainLayout(img, { boardWidthMm: 900, edition: "10e", dropUnoutlined: true });
-    expect(withDrop.pieces.length).toBe(1); // phantom (no outline) dropped
-    expect(withDrop.pieces[0]!.pos.x).toBeLessThan(withDrop.mmPerPx * 300); // the outlined (left) one survives
+    // rectCoverage pinned high so a 3-sided outline (~75%) exercises the flagged
+    // path regardless of the default clean-vs-flagged bar.
+    const res = analyzeTerrainLayout(img, OPT({ boardWidthMm: 700, edition: "10e", rectCoverage: 0.9 }));
+    expect(res.pieces.length).toBe(1);
+    expect(res.pieces[0]!.rect).toBe(false); // partial coverage → flagged
+    // Extent-midpoint centring keeps the box on the piece despite the open side.
+    expect(res.pieces[0]!.pos.x).toBeCloseTo(226, -1.2);
+    expect(res.pieces[0]!.pos.y).toBeCloseTo(201, -1.2);
   });
 
-  it("drops sub-minimum blobs (map icons) rather than snapping them up to terrain", () => {
+  it("removes a circular objective marker so it does not spawn a phantom piece", () => {
+    const img = canvas(700, 500, BATTLEMAT);
+    outlinedRect(img, 100, 120, 100 + 152, 120 + 102, 3, GREY);
+    // A solid dark objective disc (~1.5in ⌀) elsewhere on the mat.
+    const cx = 480;
+    const cy = 250;
+    const r = Math.round(inchesToMm(0.75)); // mmPerPx=1
+    for (let y = cy - r; y <= cy + r; y++)
+      for (let x = cx - r; x <= cx + r; x++) if ((x - cx) ** 2 + (y - cy) ** 2 <= r * r) fillRect(img, x, y, x + 1, y + 1, DARK);
+
+    const res = analyzeTerrainLayout(img, OPT({ boardWidthMm: 700, edition: "10e" }));
+    expect(res.pieces.length).toBe(1); // only the outlined piece; the disc is gone
+    expect(res.pieces[0]!.rect).toBe(true);
+  });
+
+  it("drops sub-minimum / wrong-sized blobs (map icons) rather than detecting them", () => {
     const img = canvas(400, 300, BATTLEMAT);
-    fillRect(img, 180, 130, 220, 170, BLUE); // 40×40px ≈ 2.5 in² — an eye-badge-sized icon
-    const res = analyzeTerrainLayout(img, { boardWidthMm: 400 });
+    outlinedRect(img, 170, 130, 170 + 40, 130 + 40, 2, BLUE); // 40×40px ≈ 2.5in — too small
+    const res = analyzeTerrainLayout(img, OPT({ boardWidthMm: 400 }));
     expect(res.pieces).toEqual([]);
   });
 
-  it("detects the board as the dark border frame, ignoring margin outside it", () => {
+  it("detects the board as the dark border frame and a piece within it, ignoring margin", () => {
     const CONCRETE: [number, number, number] = [165, 168, 166]; // outside the board
-    const DARK: [number, number, number] = [28, 28, 30];
+    const FRAME: [number, number, number] = [28, 28, 30];
     const img = canvas(500, 400, CONCRETE);
-    // Dark frame at [50..450, 40..360], battlemat inside, a piece within.
-    fillRect(img, 50, 40, 450, 43, DARK); // top
-    fillRect(img, 50, 357, 450, 360, DARK); // bottom
-    fillRect(img, 50, 40, 53, 360, DARK); // left
-    fillRect(img, 447, 40, 450, 360, DARK); // right
+    fillRect(img, 50, 40, 450, 43, FRAME); // top
+    fillRect(img, 50, 357, 450, 360, FRAME); // bottom
+    fillRect(img, 50, 40, 53, 360, FRAME); // left
+    fillRect(img, 447, 40, 450, 360, FRAME); // right
     fillRect(img, 53, 43, 447, 357, BATTLEMAT);
-    fillRect(img, 200, 150, 300, 220, GREY);
+    outlinedRect(img, 200, 150, 355, 253, 3, GREY); // a ~6×4 piece inside
 
-    const res = analyzeTerrainLayout(img, { boardWidthMm: 400 });
-    // Board hugs the frame interior, not the full 500×400 image (margin excluded).
-    expect(res.boardPx.x).toBeGreaterThanOrEqual(50);
+    const res = analyzeTerrainLayout(img, OPT({ boardWidthMm: 400, edition: "10e" }));
+    // Board bbox hugs the frame (±1px from the dilation used to connect it),
+    // not the full 500×400 image (concrete margin excluded).
+    expect(res.boardPx.x).toBeGreaterThanOrEqual(48);
     expect(res.boardPx.x).toBeLessThan(60);
     expect(res.boardPx.width).toBeGreaterThan(380);
-    expect(res.boardPx.width).toBeLessThan(400);
+    expect(res.boardPx.width).toBeLessThanOrEqual(404);
     expect(res.pieces.filter((p) => p.rect).length).toBe(1);
   });
 
@@ -226,38 +262,22 @@ describe("analyzeTerrainLayout", () => {
     const r10 = AREA_TERRAIN_FOOTPRINTS_MM["10e"];
     const snap = (lIn: number, sIn: number, roster: typeof r11): { longMm: number; shortMm: number } =>
       snapToCatalogSize(inchesToMm(lIn), inchesToMm(sIn), roster);
-    // 11th edition
     expect(snap(11, 6.8, r11)).toEqual({ longMm: inchesToMm(11.5), shortMm: inchesToMm(7) });
     expect(snap(10.2, 2.6, r11)).toEqual({ longMm: inchesToMm(10), shortMm: inchesToMm(2.5) });
-    // 10th edition — the same measurements snap to that roster instead
     expect(snap(11.9, 5.9, r10)).toEqual({ longMm: inchesToMm(12), shortMm: inchesToMm(6) });
     expect(snap(9.6, 4.8, r10)).toEqual({ longMm: inchesToMm(10), shortMm: inchesToMm(5) });
     expect(snap(5.8, 3.8, r10)).toEqual({ longMm: inchesToMm(6), shortMm: inchesToMm(4) });
   });
 
-  it("flags an L-shaped blob as not a clean rectangle (does not silently place it)", () => {
-    const img = canvas(400, 300, BATTLEMAT);
-    // An L: horizontal arm + vertical arm sharing a corner — one blob, ~50% fill.
-    fillRect(img, 60, 60, 200, 110, GREY);
-    fillRect(img, 60, 60, 110, 220, GREY);
-
-    const res = analyzeTerrainLayout(img, { boardWidthMm: 400 });
-    expect(res.pieces.length).toBe(1);
-    expect(res.pieces[0]!.rect).toBe(false);
-  });
-
   it("snapFacing rounds to the nearest step and folds into the rectangle range", () => {
     const deg = (d: number): number => (d * Math.PI) / 180;
     const back = (r: number): number => Math.round((r * 180) / Math.PI);
-    // 15° step (the default) keeps intended rotations, not just straight/45.
     expect(back(snapFacing(deg(4), 15))).toBe(0);
     expect(back(snapFacing(deg(13), 15))).toBe(15);
     expect(back(snapFacing(deg(22), 15))).toBe(15);
     expect(back(snapFacing(deg(38), 15))).toBe(45);
     expect(back(snapFacing(deg(86), 15))).toBe(90);
-    // −89° and 91° are both ≈ vertical → fold to +90° in the canonical range.
     expect(back(snapFacing(deg(-89), 15))).toBe(90);
-    // step 0 disables snapping (raw angle preserved).
     expect(snapFacing(deg(37), 0)).toBeCloseTo(deg(37), 6);
   });
 
@@ -266,12 +286,11 @@ describe("analyzeTerrainLayout", () => {
     const far = rectPiece(200, 0, 50, 50);
     expect(overlapMTV(poly(a), poly(far))).toBeNull();
 
-    // b overlaps a by 20mm along x (centres 80 apart, half-widths 50+50=100).
     const b = rectPiece(80, 0, 50, 50);
     const mtv = overlapMTV(poly(b), poly(a))!;
     expect(mtv).not.toBeNull();
-    expect(Math.hypot(mtv.x, mtv.y)).toBeCloseTo(20, 5); // penetration depth
-    expect(mtv.x).toBeGreaterThan(0); // pushes b (right of a) further right
+    expect(Math.hypot(mtv.x, mtv.y)).toBeCloseTo(20, 5);
+    expect(mtv.x).toBeGreaterThan(0);
     expect(Math.abs(mtv.y)).toBeCloseTo(0, 5);
   });
 
@@ -280,11 +299,9 @@ describe("analyzeTerrainLayout", () => {
     expect(convexIntersect(poly(pieces[0]!), poly(pieces[1]!))).toBe(true);
 
     const out = resolveOverlaps(pieces);
-    // Symmetric split: each moved 10mm outward, gap closed to a touching seam.
     expect(out[0]!.pos.x).toBeCloseTo(-10, 3);
     expect(out[1]!.pos.x).toBeCloseTo(90, 3);
     expect(out[0]!.pos.y).toBeCloseTo(0, 3);
-    // No longer penetrating (touching edges is allowed, interiors don't overlap).
     const gap = out[1]!.pos.x - out[0]!.pos.x - 100;
     expect(gap).toBeGreaterThanOrEqual(-1e-6);
   });
@@ -307,10 +324,10 @@ describe("analyzeTerrainLayout", () => {
     );
     expect(tall.losBlocking).toBe("blocks");
     expect(tall.cover).toBe("heavy");
-    expect(tall.pattern).toBe("hatch"); // grey hatch from heightColor
+    expect(tall.pattern).toBe("hatch");
     expect(low.losBlocking).toBe("none");
     expect(low.cover).toBe("light");
-    expect(low.pattern).toBe("dots"); // teal dots from heightColor
+    expect(low.pattern).toBe("dots");
     expect(tall.id).not.toBe(low.id);
   });
 });

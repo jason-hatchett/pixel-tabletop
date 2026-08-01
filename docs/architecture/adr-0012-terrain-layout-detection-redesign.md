@@ -1,7 +1,14 @@
 # ADR-0012: Terrain-layout detection — outline-box detection, best-effort across arbitrary images, human editor as finisher
 
 ## Status
-Proposed
+Accepted — implemented in `src/ingest/terrainLayoutAnalyzer.ts` (outline-box pipeline)
+and `src/ui/terrainLayoutConfirm.ts` (review-gate detection controls). Two
+deviations from the draft, both validated live: split auto-decomposition ships
+**off** by default (it mis-fires on adjacent grey/blue pieces, producing misaligned
+stacked halves; a split reads as one piece and the editor splits it), and the
+per-image threshold is exposed as a two-mode control — adaptive (auto, the default)
+tuned by a sensitivity slider, or a fixed brightness cutoff — rather than
+adaptive-only, since neither algorithm dominates across fixtures.
 
 ## Context
 [ADR-0011](adr-0011-warhammer-terrain-layout-import.md) established the import
