@@ -17,11 +17,11 @@ import { analyzeTerrainLayout, detectedTerrainToPiece } from "./ingest/terrainLa
 import { chooseModal } from "./ui/modal.js";
 import { confirmGridModal, type GridConfirmResult } from "./ui/gridConfirm.js";
 import { confirmWallsModal, type WallsConfirmResult } from "./ui/wallsConfirm.js";
-import { confirmTerrainLayoutModal, type TerrainConfirmResult, type FootprintPx } from "./ui/terrainLayoutConfirm.js";
+import { confirmTerrainLayoutModal, type TerrainConfirmResult, type FootprintPx, type DetectParams } from "./ui/terrainLayoutConfirm.js";
 import type { BoardState } from "./domain/state.js";
 import type { Wall } from "./domain/walls.js";
 import type { TerrainPiece, AreaTerrainEdition } from "./domain/terrain.js";
-import { AREA_TERRAIN_EDITIONS } from "./domain/terrain.js";
+import { AREA_TERRAIN_EDITIONS, heightClass } from "./domain/terrain.js";
 import type { PixelBuffer } from "./ingest/decode.js";
 
 // Standard Warhammer 40k battlefield sizes (real inches). A 40k map is scaled to
@@ -426,33 +426,51 @@ function reconstructMapBoard(
  */
 async function reconstructTerrainLayout(file: File, widthMm: number, heightMm: number, edition: AreaTerrainEdition): Promise<boolean> {
   const img = await decodeImageData(file);
-  const analysisResult = analyzeTerrainLayout(img, { boardWidthMm: widthMm, edition });
+  // Detection is best-effort (ADR-0012); the review gate lets the user retune the
+  // outline detector live, so keep the latest analysis to place from.
+  const analyze = (d: DetectParams): ReturnType<typeof analyzeTerrainLayout> =>
+    analyzeTerrainLayout(img, {
+      boardWidthMm: widthMm,
+      edition,
+      ...(d.mode === "brightness" ? { outlineBrightnessMax: d.outlineBrightnessMax } : d.adaptiveOffset === null ? {} : { adaptiveOffset: d.adaptiveOffset }),
+    });
+  let analysisResult = analyze({ mode: "adaptive", adaptiveOffset: null }); // adaptive default
   if (analysisResult.pieces.length === 0) {
     alert("No terrain detected in this image. Expecting an official Warhammer terrain-layout diagram (grey and teal area-terrain shapes on a battlemat).");
     return false;
   }
 
   // Detected pieces are board-relative mm; project back to image px for the preview.
-  const { mmPerPx, boardPx } = analysisResult;
-  const footprints: FootprintPx[] = analysisResult.pieces.map((p) => ({
-    cx: p.pos.x / mmPerPx + boardPx.x,
-    cy: p.pos.y / mmPerPx + boardPx.y,
-    long: (p.base.kind === "rect" ? p.base.halfWidthMm * 2 : 0) / mmPerPx,
-    short: (p.base.kind === "rect" ? p.base.halfHeightMm * 2 : 0) / mmPerPx,
-    angle: p.facing,
-    cls: p.heightMm > 60 ? "tall" : "low",
-    flagged: !p.rect,
-  }));
+  const toFootprints = (a: ReturnType<typeof analyzeTerrainLayout>): FootprintPx[] =>
+    a.pieces.map((p) => ({
+      cx: p.pos.x / a.mmPerPx + a.boardPx.x,
+      cy: p.pos.y / a.mmPerPx + a.boardPx.y,
+      long: (p.base.kind === "rect" ? p.base.halfWidthMm * 2 : 0) / a.mmPerPx,
+      short: (p.base.kind === "rect" ? p.base.halfHeightMm * 2 : 0) / a.mmPerPx,
+      angle: p.facing,
+      cls: heightClass(p.heightMm) === "tall" ? "tall" : "low",
+      flagged: !p.rect,
+    }));
 
   const url = URL.createObjectURL(file);
   let result: TerrainConfirmResult | null;
   try {
-    result = await confirmTerrainLayoutModal({ imageUrl: url, imgWidth: img.width, imgHeight: img.height, footprints });
+    result = await confirmTerrainLayoutModal({
+      imageUrl: url,
+      imgWidth: img.width,
+      imgHeight: img.height,
+      footprints: toFootprints(analysisResult),
+      redetect: (params) => {
+        analysisResult = analyze(params);
+        return toFootprints(analysisResult);
+      },
+    });
   } finally {
     URL.revokeObjectURL(url);
   }
   if (!result) return false;
 
+  // `analysisResult` already reflects the user's chosen threshold (from redetect).
   const accepted = analysisResult.pieces.filter((p) => p.rect || result.includeFlagged);
   const terrain: Record<string, TerrainPiece> = {};
   accepted.forEach((d, i) => {

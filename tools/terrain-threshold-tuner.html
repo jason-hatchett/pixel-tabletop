@@ -1,0 +1,589 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"></head><body>
+<title>Terrain Layout — Threshold Tuner</title>
+<style>
+  :root {
+    --bg: #eef1f4;
+    --panel: #ffffff;
+    --panel-2: #f6f8fa;
+    --line: #d6dde3;
+    --ink: #16202a;
+    --muted: #5d6b78;
+    --accent: #d98a12;
+    --accent-soft: #f4e6cd;
+    --tall: #1f9d57;
+    --low: #1c74d4;
+    --split: #d99a12;
+    --shadow: 0 1px 2px rgba(20,30,40,.06), 0 8px 24px rgba(20,30,40,.06);
+    --mono: ui-monospace, "SF Mono", "Cascadia Mono", "Roboto Mono", Menlo, Consolas, monospace;
+    --sans: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0e141a;
+      --panel: #161d25;
+      --panel-2: #1b232c;
+      --line: #2a343d;
+      --ink: #e7eef4;
+      --muted: #8fa0ad;
+      --accent: #f2b134;
+      --accent-soft: #35301c;
+      --tall: #37d07f;
+      --low: #4aa3ff;
+      --split: #f2c035;
+      --shadow: 0 1px 2px rgba(0,0,0,.3), 0 10px 30px rgba(0,0,0,.35);
+    }
+  }
+  :root[data-theme="light"] {
+    --bg: #eef1f4; --panel: #ffffff; --panel-2: #f6f8fa; --line: #d6dde3;
+    --ink: #16202a; --muted: #5d6b78; --accent: #d98a12; --accent-soft: #f4e6cd;
+    --tall: #1f9d57; --low: #1c74d4; --split: #d99a12;
+    --shadow: 0 1px 2px rgba(20,30,40,.06), 0 8px 24px rgba(20,30,40,.06);
+  }
+  :root[data-theme="dark"] {
+    --bg: #0e141a; --panel: #161d25; --panel-2: #1b232c; --line: #2a343d;
+    --ink: #e7eef4; --muted: #8fa0ad; --accent: #f2b134; --accent-soft: #35301c;
+    --tall: #37d07f; --low: #4aa3ff; --split: #f2c035;
+    --shadow: 0 1px 2px rgba(0,0,0,.3), 0 10px 30px rgba(0,0,0,.35);
+  }
+
+  * { box-sizing: border-box; }
+  body { margin: 0; }
+  .wrap {
+    font-family: var(--sans);
+    color: var(--ink);
+    background: var(--bg);
+    min-height: 100vh;
+    padding: clamp(14px, 3vw, 28px);
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+    max-width: 1200px;
+    margin: 0 auto;
+  }
+  header { display: flex; flex-direction: column; gap: 4px; }
+  h1 {
+    font-size: clamp(18px, 2.4vw, 24px);
+    margin: 0; letter-spacing: -0.01em; text-wrap: balance;
+  }
+  .sub { color: var(--muted); font-size: 13px; max-width: 62ch; }
+  .sub code { font-family: var(--mono); background: var(--panel-2); padding: 1px 5px; border-radius: 4px; font-size: 12px; }
+
+  .panel {
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    box-shadow: var(--shadow);
+  }
+
+  .controls {
+    padding: 14px 16px;
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    gap: 16px 24px;
+    align-items: end;
+  }
+  .ctl { display: flex; flex-direction: column; gap: 7px; min-width: 0; }
+  .ctl > .lbl {
+    font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em;
+    color: var(--muted); font-weight: 600; display: flex; justify-content: space-between; align-items: baseline;
+  }
+  .ctl .val { font-family: var(--mono); font-size: 13px; color: var(--ink); font-variant-numeric: tabular-nums; }
+  input[type="range"] { width: 100%; accent-color: var(--accent); margin: 0; }
+  select, input[type="number"] {
+    font-family: var(--sans); font-size: 13px; color: var(--ink);
+    background: var(--panel-2); border: 1px solid var(--line); border-radius: 8px;
+    padding: 7px 9px; width: 100%;
+  }
+  .toggle { display: flex; align-items: center; gap: 8px; font-size: 13px; cursor: pointer; user-select: none; padding-bottom: 4px; }
+  .toggle input { accent-color: var(--accent); width: 16px; height: 16px; }
+  :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+  .readout {
+    padding: 12px 16px; border-top: 1px solid var(--line);
+    display: flex; flex-wrap: wrap; align-items: center; gap: 10px 18px;
+    font-family: var(--mono); font-size: 13px;
+  }
+  .count { font-size: 15px; font-weight: 700; }
+  .chip { display: inline-flex; align-items: center; gap: 6px; padding: 3px 9px; border-radius: 999px; font-size: 12px; border: 1px solid var(--line); background: var(--panel-2); }
+  .dot { width: 9px; height: 9px; border-radius: 3px; }
+  .target { color: var(--muted); margin-left: auto; }
+
+  .stage {
+    position: relative; padding: 14px;
+    display: flex; align-items: center; justify-content: center;
+    min-height: 320px;
+  }
+  canvas { max-width: 100%; max-height: 74vh; border-radius: 6px; image-rendering: auto; display: block; }
+  .drop {
+    position: absolute; inset: 14px;
+    border: 2px dashed var(--line); border-radius: 10px;
+    display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px;
+    color: var(--muted); text-align: center; background: var(--panel-2);
+    transition: border-color .15s, background .15s;
+  }
+  .drop.hidden { display: none; }
+  .drop.hot { border-color: var(--accent); background: var(--accent-soft); color: var(--ink); }
+  .btn {
+    font-family: var(--sans); font-size: 13px; font-weight: 600;
+    color: var(--panel); background: var(--ink);
+    border: none; border-radius: 8px; padding: 9px 16px; cursor: pointer;
+  }
+  .btn.ghost { background: transparent; color: var(--ink); border: 1px solid var(--line); }
+  .legend {
+    display: flex; flex-wrap: wrap; gap: 8px 18px; padding: 12px 16px; border-top: 1px solid var(--line);
+    font-size: 12px; color: var(--muted);
+  }
+  .legend b { color: var(--ink); font-weight: 600; }
+  .hint { font-size: 12px; color: var(--muted); }
+  .hint b { color: var(--ink); }
+</style>
+
+<div class="wrap">
+  <header>
+    <h1>Terrain Layout — Threshold Tuner</h1>
+    <p class="sub">Tune the black-outline detection for Warhammer terrain-layout import. The border test is <b>brightness &amp; saturation</b>; each closed dark rectangle becomes a footprint, height read from the grey/blue inside. Drop a layout image to begin. Nothing leaves your browser.</p>
+  </header>
+
+  <div class="panel">
+    <div class="controls">
+      <div class="ctl">
+        <span class="lbl">Border test</span>
+        <select id="mode">
+          <option value="global">Global (brightness)</option>
+          <option value="adaptive">Adaptive (local contrast)</option>
+        </select>
+      </div>
+      <div class="ctl" data-mode="global">
+        <span class="lbl">Brightness &lt; <span class="val" id="bv">75</span></span>
+        <input id="bs" type="range" min="30" max="140" value="75" step="1">
+      </div>
+      <div class="ctl" data-mode="adaptive" hidden>
+        <span class="lbl">Window (px) <span class="val" id="wv">21</span></span>
+        <input id="ws" type="range" min="7" max="61" value="21" step="2">
+      </div>
+      <div class="ctl" data-mode="adaptive" hidden>
+        <span class="lbl">Darker than local by <span class="val" id="ov">10</span></span>
+        <input id="os" type="range" min="2" max="120" value="10" step="1">
+      </div>
+      <div class="ctl">
+        <span class="lbl">Saturation &lt; <span class="val" id="sv">40</span></span>
+        <input id="ss" type="range" min="5" max="100" value="40" step="1">
+      </div>
+      <div class="ctl">
+        <span class="lbl">Board width (in)</span>
+        <input id="bw" type="number" min="12" max="120" value="44" step="1">
+      </div>
+      <div class="ctl">
+        <span class="lbl">Gap bridge (px) <span class="val" id="gv">1</span></span>
+        <input id="gs" type="range" min="0" max="8" value="1" step="1">
+      </div>
+      <div class="ctl">
+        <span class="lbl">Min perimeter coverage <span class="val" id="cvv">0%</span></span>
+        <input id="cvs" type="range" min="0" max="100" value="0" step="5">
+      </div>
+      <div class="ctl">
+        <span class="lbl">View</span>
+        <select id="view">
+          <option value="orig">Original + boxes</option>
+          <option value="perc">Perceived (classes)</option>
+          <option value="mask">Border mask only</option>
+          <option value="gray">Grayscale (luma)</option>
+        </select>
+      </div>
+      <div class="ctl" style="gap:10px">
+        <label class="toggle"><input id="strip" type="checkbox"> Strip grid &amp; hatch (thin lines)</label>
+        <label class="toggle"><input id="objrm" type="checkbox"> Remove circular markers</label>
+        <label class="toggle"><input id="noblue" type="checkbox" checked> Exclude blue fill from outline</label>
+        <label class="toggle"><input id="framestrip" type="checkbox" checked> Strip frame border (keep edge pieces)</label>
+      </div>
+      <div class="ctl">
+        <span class="lbl">Marker ⌀ ≤ (in)</span>
+        <input id="mk" type="number" min="0.5" max="5" value="2.5" step="0.5">
+      </div>
+    </div>
+    <div class="readout" id="readout" hidden>
+      <span class="count" id="count">—</span>
+      <span class="chip"><span class="dot" style="background:var(--tall)"></span><span id="nt">0</span> tall</span>
+      <span class="chip"><span class="dot" style="background:var(--low)"></span><span id="nl">0</span> low</span>
+      <span class="chip"><span class="dot" style="background:var(--split)"></span><span id="nsp">0</span> split</span>
+      <span class="target" id="target"></span>
+    </div>
+  </div>
+
+  <div class="panel">
+    <div class="stage">
+      <canvas id="cv" width="16" height="9" aria-label="Detection preview"></canvas>
+      <div class="drop" id="drop">
+        <div style="font-size:15px;color:var(--ink);font-weight:600">Drop a terrain-layout image here</div>
+        <div class="hint">PNG / JPG / WEBP · processed locally, never uploaded</div>
+        <button class="btn" id="pick">Choose image…</button>
+        <input id="file" type="file" accept="image/*" hidden>
+      </div>
+    </div>
+    <div class="legend">
+      <span><b>Boxes</b></span>
+      <span><span class="dot" style="display:inline-block;background:var(--tall)"></span> tall (grey ruins)</span>
+      <span><span class="dot" style="display:inline-block;background:var(--low)"></span> low (blue)</span>
+      <span><span class="dot" style="display:inline-block;background:var(--split)"></span> split (grey + blue)</span>
+      <span style="margin-left:12px"><b>Perceived</b> — white = outline · grey = grey-terrain · blue = low · dark = background</span>
+    </div>
+  </div>
+
+  <p class="hint"><b>Tip:</b> for broken/faint outlines (they never form closed rectangles), raise <b>Gap bridge</b> to reconnect the pieces of an outline, then set <b>Min perimeter coverage</b> so a ~3-sided outline (≈75%) still counts while noise blobs (low coverage) are rejected. Each box shows <code>index·coverage%</code>. <b>Perceived</b> view shows what the border test selects.</p>
+</div>
+
+<script>
+(function () {
+  "use strict";
+  const $ = (id) => document.getElementById(id);
+  const cv = $("cv"), ctx = cv.getContext("2d");
+  const bs = $("bs"), ss = $("ss"), bw = $("bw"), view = $("view"), strip = $("strip"), objrm = $("objrm");
+  const mode = $("mode"), ws = $("ws"), os = $("os"), gs = $("gs"), cvs = $("cvs"), mk = $("mk"), noblue = $("noblue"), framestrip = $("framestrip");
+  const bvEl = $("bv"), svEl = $("sv"), wvEl = $("wv"), ovEl = $("ov"), gvEl = $("gv"), cvvEl = $("cvv");
+  const drop = $("drop"), fileInput = $("file"), readout = $("readout");
+  let integral = null; // summed-area table of luma, rebuilt per image
+
+  let img = null, W = 0, H = 0, data = null; // source RGBA
+
+  const bright = (r, g, b) => (r + g + b) / 3;
+  const sat = (r, g, b) => Math.max(r, g, b) - Math.min(r, g, b);
+  const isBlue = (r, g, b) => b > 100 && b - r > 40 && b - g > 15;
+  const isGrey = (r, g, b) => sat(r, g, b) < 18 && bright(r, g, b) > 60 && bright(r, g, b) < 155;
+  const isWhite = (r, g, b) => bright(r, g, b) > 205 && sat(r, g, b) < 25;
+
+  function loadImage(src) {
+    const im = new Image();
+    im.onload = () => {
+      img = im; W = im.naturalWidth; H = im.naturalHeight;
+      cv.width = W; cv.height = H;
+      const off = document.createElement("canvas"); off.width = W; off.height = H;
+      const octx = off.getContext("2d", { willReadFrequently: true });
+      octx.drawImage(im, 0, 0);
+      data = octx.getImageData(0, 0, W, H).data;
+      buildIntegral();
+      drop.classList.add("hidden");
+      readout.hidden = false;
+      schedule();
+    };
+    im.src = src;
+  }
+
+  // --- geometry helpers ---
+  function dilate(m) {
+    const o = new Uint8Array(W * H);
+    for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+      let v = 0;
+      for (let dy = -1; dy <= 1 && !v; dy++) for (let dx = -1; dx <= 1; dx++) {
+        const nx = x + dx, ny = y + dy;
+        if (nx >= 0 && ny >= 0 && nx < W && ny < H && m[ny * W + nx]) { v = 1; break; }
+      }
+      o[y * W + x] = v;
+    }
+    return o;
+  }
+  function erode(m) {
+    const o = new Uint8Array(W * H);
+    for (let y = 1; y < H - 1; y++) for (let x = 1; x < W - 1; x++) {
+      let v = 1;
+      for (let dy = -1; dy <= 1 && v; dy++) for (let dx = -1; dx <= 1; dx++) {
+        if (!m[(y + dy) * W + (x + dx)]) { v = 0; break; }
+      }
+      o[y * W + x] = v;
+    }
+    return o;
+  }
+  // Fraction of an oriented box's perimeter that has a mask pixel within `tol`.
+  function perimeterCoverage(bx, mask, tol) {
+    const ux = Math.cos(bx.angle), uy = Math.sin(bx.angle), hw = bx.long / 2, hh = bx.short / 2;
+    const corner = (a, b) => [bx.cx + a * ux - b * uy, bx.cy + a * uy + b * ux];
+    const pts = [corner(-hw, -hh), corner(hw, -hh), corner(hw, hh), corner(-hw, hh)];
+    const near = (x, y) => {
+      for (let dy = -tol; dy <= tol; dy++) for (let dx = -tol; dx <= tol; dx++) {
+        const nx = Math.round(x + dx), ny = Math.round(y + dy);
+        if (nx >= 0 && ny >= 0 && nx < W && ny < H && mask[ny * W + nx]) return 1;
+      }
+      return 0;
+    };
+    let cov = 0, tot = 0;
+    for (let e = 0; e < 4; e++) {
+      const a = pts[e], b = pts[(e + 1) % 4];
+      const steps = Math.max(4, Math.round(Math.hypot(b[0] - a[0], b[1] - a[1]) / 5));
+      for (let s = 0; s <= steps; s++) { const t = s / steps; tot++; cov += near(a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t); }
+    }
+    return tot ? cov / tot : 0;
+  }
+  function components(mask, minPx) {
+    const seen = new Uint8Array(W * H), out = [], st = [];
+    for (let s = 0; s < W * H; s++) {
+      if (!mask[s] || seen[s]) continue;
+      const px = []; st.length = 0; st.push(s); seen[s] = 1;
+      while (st.length) {
+        const i = st.pop(); px.push(i);
+        const x = i % W, y = (i / W) | 0;
+        for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
+          const nx = x + dx, ny = y + dy;
+          if (nx < 0 || ny < 0 || nx >= W || ny >= H) continue;
+          const j = ny * W + nx;
+          if (mask[j] && !seen[j]) { seen[j] = 1; st.push(j); }
+        }
+      }
+      if (px.length >= minPx) out.push(px);
+    }
+    return out;
+  }
+  function orientedBox(px) {
+    let sx = 0, sy = 0;
+    for (const i of px) { sx += i % W; sy += (i / W) | 0; }
+    const n = px.length, cx = sx / n, cy = sy / n;
+    let xx = 0, yy = 0, xy = 0;
+    for (const i of px) { const dx = i % W - cx, dy = ((i / W) | 0) - cy; xx += dx * dx; yy += dy * dy; xy += dx * dy; }
+    xx /= n; yy /= n; xy /= n;
+    let a = 0.5 * Math.atan2(2 * xy, xx - yy);
+    const ux = Math.cos(a), uy = Math.sin(a);
+    let uMin = 1e9, uMax = -1e9, vMin = 1e9, vMax = -1e9;
+    for (const i of px) {
+      const dx = i % W - cx, dy = ((i / W) | 0) - cy;
+      const pu = dx * ux + dy * uy, pv = -dx * uy + dy * ux;
+      if (pu < uMin) uMin = pu; if (pu > uMax) uMax = pu;
+      if (pv < vMin) vMin = pv; if (pv > vMax) vMax = pv;
+    }
+    // Centre the box on the MIDPOINT of the measured extent, not the pixel centroid:
+    // a partial outline (e.g. 3 sides) pulls the centroid off-centre, which mis-places
+    // the box even when its size and angle are right.
+    const uMid = (uMin + uMax) / 2, vMid = (vMin + vMax) / 2;
+    const bcx = cx + uMid * ux - vMid * uy, bcy = cy + uMid * uy + vMid * ux;
+    let eu = uMax - uMin, ev = vMax - vMin;
+    if (ev > eu) { const t = eu; eu = ev; ev = t; a += Math.PI / 2; }
+    return { cx: bcx, cy: bcy, long: eu, short: ev, angle: a };
+  }
+  const lum = (x, y) => {
+    if (x < 0 || y < 0 || x >= W || y >= H) return 255;
+    const p = (y * W + x) * 4;
+    return 0.299 * data[p] + 0.587 * data[p + 1] + 0.114 * data[p + 2];
+  };
+
+  // Summed-area table of luma for O(1) local-mean lookups (adaptive threshold).
+  function buildIntegral() {
+    const sw = W + 1;
+    integral = new Float64Array(sw * (H + 1));
+    for (let y = 0; y < H; y++) {
+      let rowSum = 0;
+      for (let x = 0; x < W; x++) {
+        const p = (y * W + x) * 4;
+        rowSum += 0.299 * data[p] + 0.587 * data[p + 1] + 0.114 * data[p + 2];
+        integral[(y + 1) * sw + (x + 1)] = integral[y * sw + (x + 1)] + rowSum;
+      }
+    }
+  }
+  function localMean(x, y, r) {
+    const sw = W + 1;
+    const x0 = Math.max(0, x - r), y0 = Math.max(0, y - r);
+    const x1 = Math.min(W - 1, x + r), y1 = Math.min(H - 1, y + r);
+    const s = integral[(y1 + 1) * sw + (x1 + 1)] - integral[y0 * sw + (x1 + 1)]
+            - integral[(y1 + 1) * sw + x0] + integral[y0 * sw + x0];
+    return s / ((x1 - x0 + 1) * (y1 - y0 + 1));
+  }
+
+  function detect() {
+    const B = +bs.value, S = +ss.value, boardIn = Math.max(1, +bw.value);
+    const adaptive = mode.value === "adaptive", r = (+ws.value - 1) / 2 | 0, C = +os.value;
+    const gap = +gs.value, minCov = +cvs.value / 100;
+    bvEl.textContent = B; svEl.textContent = S; wvEl.textContent = ws.value; ovEl.textContent = C;
+    gvEl.textContent = gap; cvvEl.textContent = cvs.value + "%";
+    const N = W * H;
+
+    // border mask — global brightness cut, or adaptive (darker than local mean by C)
+    const dark = new Uint8Array(N);
+    const exBlue = noblue.checked;
+    for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+      const i = y * W + x, p = i * 4;
+      const R = data[p], G = data[p + 1], Bb = data[p + 2];
+      if (sat(R, G, Bb) >= S) continue;
+      if (exBlue && isBlue(R, G, Bb)) continue; // blue is terrain fill, not ink — never an outline
+      const l = 0.299 * R + 0.587 * G + 0.114 * Bb;
+      dark[i] = adaptive ? (l < localMean(x, y, r) - C ? 1 : 0) : (bright(R, G, Bb) < B ? 1 : 0);
+    }
+    // strip thin dark lines (grid + hatch): a luma valley in either axis
+    if (strip.checked) {
+      const P = 2, C = 8;
+      for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+        const i = y * W + x; if (!dark[i]) continue;
+        const c = lum(x, y);
+        const vv = lum(x - P, y) - c > C && lum(x + P, y) - c > C;
+        const hv = lum(x, y - P) - c > C && lum(x, y + P) - c > C;
+        if (vv || hv) dark[i] = 0;
+      }
+    }
+    // Remove circular markers (skulls, eyeballs, objective rings): find round shapes
+    // of marker size and clear a disk, so a marker overlapping a piece can't merge
+    // into its outline. Two sources: bright icon centres, and dark rings of marker size.
+    if (objrm.checked) {
+      const pxPerIn = W / boardIn;
+      const maxD = Math.max(6, (+mk.value) * pxPerIn), minD = 0.6 * pxPerIn;
+      const centers = [];
+      // A real marker is a bright/round centre inside a dark ring. Test enclosure so
+      // a light background (which is full of "white") doesn't read as thousands of markers.
+      const enclosed = (cx, cy, rad) => { let hit = 0; for (let a = 0; a < 8; a++) { const x = Math.round(cx + rad * Math.cos(a * Math.PI / 4)), y = Math.round(cy + rad * Math.sin(a * Math.PI / 4)); if (x >= 0 && y >= 0 && x < W && y < H && dark[y * W + x]) hit++; } return hit; };
+      const white = new Uint8Array(N);
+      for (let i = 0; i < N; i++) { const p = i * 4; white[i] = isWhite(data[p], data[p + 1], data[p + 2]) ? 1 : 0; }
+      for (const px of components(white, 20)) {
+        if (px.length > maxD * maxD) continue;
+        let sx = 0, sy = 0, x0 = 1e9, x1 = -1e9;
+        for (const i of px) { sx += i % W; sy += (i / W) | 0; const x = i % W; if (x < x0) x0 = x; if (x > x1) x1 = x; }
+        const cx = sx / px.length, cy = sy / px.length, rad = Math.max(6, (x1 - x0) / 2 + 4);
+        if (enclosed(cx, cy, rad) >= 4) centers.push({ cx, cy, r: rad + 4 });
+      }
+      // dark rings/discs that are roughly round and marker-sized
+      for (const px of components(dark, Math.round(minD * 1.5))) {
+        let x0 = 1e9, y0 = 1e9, x1 = -1e9, y1 = -1e9;
+        for (const i of px) { const x = i % W, y = (i / W) | 0; if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y; }
+        const wC = x1 - x0 + 1, hC = y1 - y0 + 1, D = Math.max(wC, hC);
+        if (D < minD || D > maxD) continue;                 // marker-sized only
+        if (Math.min(wC, hC) / D < 0.65) continue;           // roughly square bbox
+        const set = new Set(px);
+        const cornerFull = (cx, cy) => { for (let dy = -2; dy <= 2; dy++) for (let dx = -2; dx <= 2; dx++) if (set.has((cy + dy) * W + (cx + dx))) return 1; return 0; };
+        if (cornerFull(x0, y0) + cornerFull(x1, y0) + cornerFull(x1, y1) + cornerFull(x0, y1) > 1) continue; // filled corners → a rectangle, not a circle
+        centers.push({ cx: (x0 + x1) / 2, cy: (y0 + y1) / 2, r: D / 2 + 3 });
+      }
+      for (const m of centers) {
+        const R = m.r;
+        for (let y = Math.max(0, m.cy - R | 0); y < Math.min(H, m.cy + R); y++)
+          for (let x = Math.max(0, m.cx - R | 0); x < Math.min(W, m.cx + R); x++) {
+            const dx = x - m.cx, dy = y - m.cy; if (dx * dx + dy * dy <= R * R) dark[y * W + x] = 0;
+          }
+      }
+    }
+
+    // Board box from the largest dark component. Use its BOUNDING BOX for scale — a
+    // PCA "long" over-measures when the frame picks up attached bits — and, if enabled,
+    // strip only the border BAND so a piece touching the frame survives (as a 3-sided
+    // outline) instead of being fused into the frame and discarded.
+    const d0 = dilate(dark);
+    const all0 = components(d0, 80);
+    let big = all0[0] || [];
+    for (const c of all0) if (c.length > big.length) big = c;
+    let bx0 = 1e9, by0 = 1e9, bx1 = 0, by1 = 0;
+    for (const i of big) { const x = i % W, y = (i / W) | 0; if (x < bx0) bx0 = x; if (x > bx1) bx1 = x; if (y < by0) by0 = y; if (y > by1) by1 = y; }
+    const boardW = Math.max(1, bx1 - bx0 + 1);
+    const IN = boardW / boardIn;
+
+    // Bridge outline gaps (close = dilate then erode) so a broken outline reconnects.
+    let m = dark.slice();
+    if (framestrip.checked) {
+      const band = Math.max(3, Math.round(boardW * 0.02));
+      for (let y = by0 - 2; y <= by1 + 2; y++) for (let x = bx0 - 2; x <= bx1 + 2; x++) {
+        if (x < 0 || y < 0 || x >= W || y >= H) continue;
+        if (x < bx0 + band || x > bx1 - band || y < by0 + band || y > by1 - band) m[y * W + x] = 0;
+      }
+    }
+    for (let i = 0; i < gap; i++) m = dilate(m);
+    for (let i = 0; i < gap; i++) m = erode(m);
+    const d2 = dilate(m);
+    const all = components(d2, 80);
+    // discard the frame as the largest blob only when we did NOT strip its border away
+    let frame = null;
+    if (!framestrip.checked) { frame = all[0] || []; for (const c of all) if (c.length > frame.length) frame = c; }
+    const covTol = gap + 2;
+
+    const pieces = [];
+    for (const c of all) {
+      if (c === frame) continue;
+      const bx = orientedBox(c);
+      const li = bx.long / IN, si = bx.short / IN;
+      if (li < 3.5 || li > 13.5 || si < 1.8 || si > 9) continue;
+      if (bx.long / Math.max(1, bx.short) > 4) continue;
+      // Accept a partial rectangle if enough of its perimeter is backed by outline.
+      bx.cov = perimeterCoverage(bx, d2, covTol);
+      if (bx.cov < minCov) continue;
+      const ux = Math.cos(bx.angle), uy = Math.sin(bx.angle), vx = -uy, vy = ux;
+      let g = 0, b = 0;
+      for (let du = -bx.long / 2; du <= bx.long / 2; du += 3)
+        for (let dv = -bx.short / 2; dv <= bx.short / 2; dv += 3) {
+          const x = Math.round(bx.cx + du * ux + dv * vx), y = Math.round(bx.cy + du * uy + dv * vy);
+          if (x < 0 || y < 0 || x >= W || y >= H) continue;
+          const p = (y * W + x) * 4;
+          if (isGrey(data[p], data[p + 1], data[p + 2])) g++;
+          else if (isBlue(data[p], data[p + 1], data[p + 2])) b++;
+        }
+      const tot = g + b || 1;
+      bx.kind = (Math.min(g, b) >= 0.2 * tot && g && b) ? "split" : (g >= b ? "tall" : "low");
+      pieces.push(bx);
+    }
+    return { dark, pieces };
+  }
+
+  const col = (k) => k === "split" ? cssVar("--split") : k === "tall" ? cssVar("--tall") : cssVar("--low");
+  function cssVar(n) { return getComputedStyle(document.documentElement).getPropertyValue(n).trim() || "#888"; }
+
+  function render() {
+    if (!data) return;
+    const { dark, pieces } = detect();
+    const N = W * H;
+    const vmode = view.value;
+
+    if (vmode === "orig") {
+      ctx.drawImage(img, 0, 0);
+    } else {
+      const out = ctx.createImageData(W, H);
+      for (let i = 0; i < N; i++) {
+        const p = i * 4; const r = data[p], g = data[p + 1], b = data[p + 2];
+        let c;
+        if (vmode === "gray") { const l = (0.299 * r + 0.587 * g + 0.114 * b) | 0; c = [l, l, l]; }
+        else if (vmode === "mask") { c = dark[i] ? [242, 92, 46] : [22, 26, 30]; }
+        else { // perceived
+          if (dark[i]) c = [245, 245, 245];
+          else if (isBlue(r, g, b)) c = [46, 116, 212];
+          else if (isGrey(r, g, b)) c = [140, 148, 156];
+          else c = [24, 28, 33];
+        }
+        out.data[p] = c[0]; out.data[p + 1] = c[1]; out.data[p + 2] = c[2]; out.data[p + 3] = 255;
+      }
+      ctx.putImageData(out, 0, 0);
+    }
+
+    ctx.lineWidth = Math.max(2, W / 380);
+    ctx.font = `bold ${Math.max(14, W / 55)}px ${getComputedStyle(document.body).fontFamily}`;
+    let n = 0; const k = { tall: 0, low: 0, split: 0 };
+    for (const p of pieces) {
+      k[p.kind]++;
+      const ux = Math.cos(p.angle), uy = Math.sin(p.angle), hw = p.long / 2, hh = p.short / 2;
+      const cs = [[-hw, -hh], [hw, -hh], [hw, hh], [-hw, hh]].map(([a, b]) => [p.cx + a * ux - b * uy, p.cy + a * uy + b * ux]);
+      ctx.strokeStyle = col(p.kind);
+      ctx.beginPath(); cs.forEach(([x, y], i) => i ? ctx.lineTo(x, y) : ctx.moveTo(x, y)); ctx.closePath(); ctx.stroke();
+      ctx.fillStyle = vmode === "orig" ? "#fff" : "#ffe08a";
+      ctx.fillText(++n + (p.cov != null ? "·" + Math.round(p.cov * 100) : ""), p.cx - 14, p.cy + 6);
+    }
+    $("count").textContent = pieces.length + (pieces.length === 1 ? " piece" : " pieces");
+    $("nt").textContent = k.tall; $("nl").textContent = k.low; $("nsp").textContent = k.split;
+    $("target").textContent = mode.value === "adaptive"
+      ? `border: adaptive (window ${ws.value}px, −${os.value}), sat<${ss.value}`
+      : `border: brightness<${bs.value}, sat<${ss.value}`;
+  }
+
+  function syncMode() {
+    document.querySelectorAll("[data-mode]").forEach((el) => { el.hidden = el.dataset.mode !== mode.value; });
+  }
+
+  // throttle to animation frames
+  let queued = false;
+  function schedule() { if (queued) return; queued = true; requestAnimationFrame(() => { queued = false; render(); }); }
+  [bs, ss, bw, ws, os, gs, cvs, mk].forEach((el) => el.addEventListener("input", schedule));
+  [view, strip, objrm, noblue, framestrip].forEach((el) => el.addEventListener("change", schedule));
+  mode.addEventListener("change", () => { syncMode(); schedule(); });
+  syncMode();
+
+  // file loading
+  $("pick").addEventListener("click", () => fileInput.click());
+  fileInput.addEventListener("change", (e) => { const f = e.target.files[0]; if (f) readFile(f); });
+  function readFile(f) { const fr = new FileReader(); fr.onload = () => loadImage(fr.result); fr.readAsDataURL(f); }
+  ["dragenter", "dragover"].forEach((ev) => drop.addEventListener(ev, (e) => { e.preventDefault(); drop.classList.add("hot"); }));
+  ["dragleave", "drop"].forEach((ev) => drop.addEventListener(ev, (e) => { e.preventDefault(); drop.classList.remove("hot"); }));
+  drop.addEventListener("drop", (e) => { const f = e.dataTransfer.files[0]; if (f && f.type.startsWith("image/")) readFile(f); });
+  // allow dropping onto the whole stage once an image is loaded
+  const stage = document.querySelector(".stage");
+  ["dragover", "drop"].forEach((ev) => stage.addEventListener(ev, (e) => { e.preventDefault(); if (ev === "drop") { const f = e.dataTransfer.files[0]; if (f && f.type.startsWith("image/")) readFile(f); } }));
+})();
+</script>
+
+</body></html>

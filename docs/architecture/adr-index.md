@@ -22,6 +22,7 @@ Status values: `Proposed` → `Accepted` → (later) `Superseded` / `Deprecated`
 | [0009](adr-0009-image-map-ingestion.md) | Image-map ingestion: CV extraction at import emits Wall/TerrainPiece via loadState | Accepted |
 | [0010](adr-0010-image-calibration-by-game-type.md) | Image calibration by game type: grid detection (D&D) + battlefield-size presets (40k) | Proposed |
 | [0011](adr-0011-warhammer-terrain-layout-import.md) | Warhammer terrain-layout import: separate ingest flow emitting height-carrying TerrainPiece | Proposed |
+| [0012](adr-0012-terrain-layout-detection-redesign.md) | Terrain-layout detection: outline-box detection, best-effort across arbitrary images, editor as finisher | Proposed |
 
 ## Related
 - Design pillars these decisions serve → [../vision.md](../vision.md)

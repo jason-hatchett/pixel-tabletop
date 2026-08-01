@@ -25,15 +25,34 @@ export interface FootprintPx {
   flagged: boolean;
 }
 
+/**
+ * Outline-detection controls the review gate can retune live (ADR-0012 §3). The
+ * two are mutually exclusive: `adaptive` is the local-contrast detector (the
+ * default), tuned by `adaptiveOffset`; `brightness` is a fixed global cutoff. The
+ * user picks the mode and tunes it, so "auto" is a point on the same scale they
+ * can always return to — not a different algorithm the slider can't reach.
+ */
+export type DetectParams =
+  | { mode: "adaptive"; adaptiveOffset: number | null }
+  | { mode: "brightness"; outlineBrightnessMax: number };
+
 export interface TerrainConfirmResult {
   includeFlagged: boolean;
+  /** The detection parameters the user settled on. */
+  detect: DetectParams;
 }
 
 export interface TerrainConfirmOptions {
   imageUrl: string;
   imgWidth: number;
   imgHeight: number;
+  /** Initial footprints (from the default adaptive detection). */
   footprints: FootprintPx[];
+  /**
+   * Re-run detection with the given parameters and return the new footprints in
+   * image px. Enables the per-image threshold controls; omitted → no controls.
+   */
+  redetect?: (params: DetectParams) => FootprintPx[];
 }
 
 const TALL = "rgba(180, 190, 205, 0.95)";
@@ -58,6 +77,9 @@ function corners(f: FootprintPx): [number, number][] {
 export function confirmTerrainLayoutModal(opts: TerrainConfirmOptions): Promise<TerrainConfirmResult | null> {
   return new Promise((resolve) => {
     let includeFlagged = false;
+    let footprints = opts.footprints;
+    // Detection params the user is on; defaults to the adaptive detector.
+    let detect: DetectParams = { mode: "adaptive", adaptiveOffset: null };
 
     const backdrop = document.createElement("div");
     backdrop.className = "modal-backdrop";
@@ -89,7 +111,7 @@ export function confirmTerrainLayoutModal(opts: TerrainConfirmOptions): Promise<
       imgHeight: opts.imgHeight,
       overlay: (ctx, view) => {
         ctx.lineWidth = 2 / view.z;
-        for (const f of opts.footprints) {
+        for (const f of footprints) {
           const skip = f.flagged && !includeFlagged;
           const c = corners(f);
           ctx.beginPath();
@@ -111,13 +133,12 @@ export function confirmTerrainLayoutModal(opts: TerrainConfirmOptions): Promise<
     });
     modal.appendChild(preview.canvas);
 
-    const tall = opts.footprints.filter((f) => !f.flagged && f.cls === "tall").length;
-    const low = opts.footprints.filter((f) => !f.flagged && f.cls === "low").length;
-    const flagged = opts.footprints.filter((f) => f.flagged).length;
-
     const readout = document.createElement("div");
     readout.className = "modal-readout";
     const setReadout = (): void => {
+      const tall = footprints.filter((f) => !f.flagged && f.cls === "tall").length;
+      const low = footprints.filter((f) => !f.flagged && f.cls === "low").length;
+      const flagged = footprints.filter((f) => f.flagged).length;
       const placing = tall + low + (includeFlagged ? flagged : 0);
       readout.textContent =
         `${placing} pieces to place — ${tall} tall, ${low} low` + (flagged ? `, ${flagged} flagged${includeFlagged ? " (included)" : " (excluded)"}` : "");
@@ -125,22 +146,95 @@ export function confirmTerrainLayoutModal(opts: TerrainConfirmOptions): Promise<
     setReadout();
     modal.appendChild(readout);
 
-    // --- include-flagged toggle (only if there are any) ---
-    if (flagged > 0) {
-      const fields = document.createElement("div");
-      fields.className = "modal-fields";
-      const wrap = document.createElement("label");
-      const box = document.createElement("input");
-      box.type = "checkbox";
-      box.addEventListener("change", () => {
-        includeFlagged = box.checked;
-        setReadout();
-        preview.redraw();
+    const fields = document.createElement("div");
+    fields.className = "modal-fields";
+    modal.appendChild(fields);
+
+    // --- outline-detection controls (only if the caller supports re-detection) ---
+    // One mode selector + one slider that means the right thing per mode, so the
+    // manual knob tunes the SAME detector as "auto" (adaptive) and can always reach
+    // it — rather than silently swapping to a different algorithm (ADR-0012 §3).
+    if (opts.redetect) {
+      const redetect = opts.redetect;
+      // Per-mode slider config; the adaptive default (offset null) sits at 16.
+      const CFG = {
+        adaptive: { min: 6, max: 34, def: 16, label: "Sensitivity (lower = more)" },
+        brightness: { min: 40, max: 140, def: 80, label: "Outline brightness" },
+      } as const;
+
+      const row = document.createElement("div");
+      row.className = "modal-field-row";
+
+      const modeLabel = document.createElement("label");
+      const mode = document.createElement("select");
+      const optA = document.createElement("option");
+      optA.value = "adaptive";
+      optA.textContent = "Adaptive (auto)";
+      const optB = document.createElement("option");
+      optB.value = "brightness";
+      optB.textContent = "Brightness";
+      mode.append(optA, optB);
+      modeLabel.append(document.createTextNode("Detection "), mode);
+
+      const slider = document.createElement("input");
+      slider.type = "range";
+      slider.step = "1";
+      const sliderLabel = document.createElement("label");
+      const sliderText = document.createElement("span");
+      const sliderVal = document.createElement("span");
+      sliderLabel.append(sliderText, document.createTextNode(" "), sliderVal);
+
+      const applySliderCfg = (m: "adaptive" | "brightness"): void => {
+        const c = CFG[m];
+        slider.min = String(c.min);
+        slider.max = String(c.max);
+        slider.value = String(c.def);
+        sliderText.textContent = c.label;
+        sliderVal.textContent = String(c.def);
+      };
+      applySliderCfg("adaptive");
+
+      const currentParams = (): DetectParams => {
+        const v = Number(slider.value);
+        return mode.value === "brightness"
+          ? { mode: "brightness", outlineBrightnessMax: v }
+          : { mode: "adaptive", adaptiveOffset: v };
+      };
+
+      let raf = 0;
+      const rerun = (): void => {
+        cancelAnimationFrame(raf);
+        raf = requestAnimationFrame(() => {
+          detect = currentParams();
+          footprints = redetect(detect);
+          setReadout();
+          preview.redraw();
+        });
+      };
+      mode.addEventListener("change", () => {
+        applySliderCfg(mode.value as "adaptive" | "brightness");
+        rerun();
       });
-      wrap.append(box, document.createTextNode(" Include flagged (red) blobs"));
-      fields.appendChild(wrap);
-      modal.appendChild(fields);
+      slider.addEventListener("input", () => {
+        sliderVal.textContent = slider.value;
+        rerun();
+      });
+
+      row.append(modeLabel, sliderLabel, slider);
+      fields.appendChild(row);
     }
+
+    // --- include-flagged toggle ---
+    const flagWrap = document.createElement("label");
+    const box = document.createElement("input");
+    box.type = "checkbox";
+    box.addEventListener("change", () => {
+      includeFlagged = box.checked;
+      setReadout();
+      preview.redraw();
+    });
+    flagWrap.append(box, document.createTextNode(" Include flagged (red) blobs"));
+    fields.appendChild(flagWrap);
 
     // --- actions ---
     const actions = document.createElement("div");
@@ -149,7 +243,7 @@ export function confirmTerrainLayoutModal(opts: TerrainConfirmOptions): Promise<
     place.type = "button";
     place.className = "primary";
     place.textContent = "Place terrain";
-    place.addEventListener("click", () => close({ includeFlagged }));
+    place.addEventListener("click", () => close({ includeFlagged, detect }));
     const cancel = document.createElement("button");
     cancel.type = "button";
     cancel.textContent = "Cancel";
